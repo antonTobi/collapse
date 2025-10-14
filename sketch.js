@@ -20,6 +20,7 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 
 let currentUser = null;
+let currentUserDisplayName = null;
 
 const alphabet = "abcdefghijklmnopqrstuvwxyz";
 
@@ -252,10 +253,59 @@ let highScore;
 let w = 5;
 let h = 5;
 
+let topScores = [];
+let showLeaderboard = false;
+
 function newGame() {
     grid = new NumberGrid(w, h);
     storeItem("autoSaveSeed", grid.seed);
     removeItem("autoSaveMoves");
+}
+
+async function getOrCreateUserDocument(userId) {
+    try {
+        const userDoc = await db.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
+            // Create a new user document with a default display name
+            const defaultName = `Player ${userId.substring(0, 6)}`;
+            await db.collection('users').doc(userId).set({
+                displayName: defaultName,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            return defaultName;
+        } else {
+            return userDoc.data().displayName;
+        }
+    } catch (error) {
+        console.error("Error getting/creating user document:", error);
+        return `Player ${userId.substring(0, 6)}`;
+    }
+}
+
+async function updateDisplayName(userId, newName) {
+    try {
+        await db.collection('users').doc(userId).update({
+            displayName: newName,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        currentUserDisplayName = newName;
+        console.log("Display name updated to:", newName);
+        return true;
+    } catch (error) {
+        console.error("Error updating display name:", error);
+        return false;
+    }
+}
+
+async function promptForDisplayName() {
+    const newName = prompt("Enter your display name:", currentUserDisplayName || "");
+    if (newName && newName.trim() !== "") {
+        const success = await updateDisplayName(currentUser.uid, newName.trim());
+        if (success) {
+            loop(); // Redraw if leaderboard is showing
+        }
+    }
 }
 
 async function saveHighScore(score) {
@@ -271,24 +321,83 @@ async function saveHighScore(score) {
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         });
         console.log("Score saved successfully:", score);
+
+        // Fetch and display the leaderboard after saving
+        await fetchTodaysTopScores();
+        showLeaderboard = true;
+        loop(); // Redraw to show leaderboard
     } catch (error) {
         console.error("Error saving score:", error);
     }
 }
 
-function setup() {
+async function fetchTodaysTopScores() {
+    try {
+        // Get midnight UTC today
+        const todayMidnight = new Date();
+        todayMidnight.setUTCHours(0, 0, 0, 0);
+
+        const snapshot = await db.collection('scores')
+            .where('timestamp', '>=', todayMidnight)
+            .orderBy('timestamp', 'desc')
+            .orderBy('score', 'desc')
+            .get();
+
+        // Filter to keep only the highest score per user
+        const userBestScores = new Map();
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            const userId = data.userId;
+
+            // Only keep the first (highest) score for each user
+            if (!userBestScores.has(userId)) {
+                userBestScores.set(userId, data);
+            }
+        });
+
+        // Convert to array and sort by score descending
+        let scores = Array.from(userBestScores.values());
+        scores.sort((a, b) => b.score - a.score);
+        scores = scores.slice(0, 10);
+
+        // Fetch display names for all users in the top 10
+        const userIds = scores.map(s => s.userId);
+        const userDocs = await Promise.all(
+            userIds.map(uid => db.collection('users').doc(uid).get())
+        );
+
+        // Merge display names with scores
+        topScores = scores.map((score, index) => {
+            const userDoc = userDocs[index];
+            return {
+                ...score,
+                displayName: userDoc.exists ? userDoc.data().displayName : ""
+            };
+        });
+
+        console.log("Top scores fetched:", topScores);
+        redraw()
+    } catch (error) {
+        console.error("Error fetching top scores:", error);
+    }
+}function setup() {
     createCanvas(w * S, h * S + S);
     textAlign(CENTER, CENTER);
     strokeWeight(2);
 
-    auth.onAuthStateChanged(user => {
+    auth.onAuthStateChanged(async user => {
         if (user) {
             // User is signed in.
             currentUser = user;
             console.log("User signed in anonymously:", currentUser.uid);
+            
+            // Load or create user's display name
+            currentUserDisplayName = await getOrCreateUserDocument(user.uid);
+            console.log("Display name:", currentUserDisplayName);
         } else {
             // User is signed out.
             currentUser = null;
+            currentUserDisplayName = null;
             auth.signInAnonymously().catch(error => {
                 console.error("Anonymous sign-in failed:", error);
             });
@@ -325,6 +434,14 @@ function draw() {
 
     text("↺", width - S / 2, 42);
 
+    textSize(32)
+    // Draw leaderboard toggle button (top left)
+    text("🏆", S / 2, 42);
+
+    // Draw leaderboard if toggled on
+    if (showLeaderboard) {
+        drawLeaderboard();
+    }
 
     //   fill(200);
     //   textSize(15);
@@ -335,17 +452,91 @@ function draw() {
 
 }
 
+function drawLeaderboard() {
+    // Semi-transparent background
+    fill(0, 0, 0, 200);
+    rect(20, 100, width - 40, height - 120);
+
+    // Title
+    fill(255);
+    textSize(24);
+    textAlign(CENTER, CENTER);
+    text("Today's Top 10", width / 2, 130);
+    
+    // Edit name button (top right of leaderboard)
+    textSize(20);
+    textAlign(RIGHT, CENTER);
+    text("✏️", width - 40, 130);
+    textAlign(CENTER, CENTER);
+    textSize(24);
+
+    if (topScores.length === 0) {
+        // Show loading message
+        textSize(18);
+        fill(200);
+        text("Fetching scores...", width / 2, height / 2);
+    } else {
+        // Scores
+        textSize(16);
+        textAlign(LEFT, CENTER);
+        let y = 170;
+        for (let i = 0; i < topScores.length; i++) {
+            let scoreData = topScores[i];
+            let displayText = `${i + 1}. ${scoreData.score}`;
+
+            if (scoreData.displayName) {
+                displayText += ` (${scoreData.displayName})`
+            }
+
+            // Highlight current user's score
+            if (scoreData.userId === currentUser?.uid) {
+                fill(255, 255, 0); // Yellow for current user
+            } else {
+                fill(255);
+            }
+
+            text(displayText, 40, y);
+            y += 25;
+        }
+    }
+
+    textAlign(CENTER, CENTER); // Reset alignment
+}
+
 function mousePressed() {
     if (mouseY < 80) {
         if (mouseX > width - 80) {
+            // Reset button (top right)
             if (grid.gameOver || grid.score < 1000 || confirm("Start a new game?")) {
                 newGame();
+                showLeaderboard = false;
                 loop();
             }
+        } else if (mouseX < 80) {
+            // Leaderboard toggle button (top left)
+            showLeaderboard = !showLeaderboard;
+
+            // Always fetch fresh scores when showing the leaderboard
+            if (showLeaderboard) {
+                fetchTodaysTopScores().then(() => {
+                    loop(); // Redraw once scores are loaded
+                });
+            }
+
+            loop(); // Redraw to show/hide leaderboard immediately
         }
     } else {
-        grid.click(mouseX, mouseY);
+        if (showLeaderboard) {
+            // Check if clicking the edit name button in leaderboard (top right area)
+            if (mouseY >= 100 && mouseY <= 160 && mouseX >= width - 80 && mouseX <= width - 20) {
+                promptForDisplayName();
+            } else {
+                // Clicking elsewhere on leaderboard closes it
+                showLeaderboard = false
+            }
+        } else {
+            grid.click(mouseX, mouseY);
+        }
     }
     redraw();
 }
-

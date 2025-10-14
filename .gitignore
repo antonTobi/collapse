@@ -1,0 +1,20 @@
+# Build directories
+dist/
+.parcel-cache/
+
+# Dependencies
+node_modules/
+
+# Package management files (if you decide not to use npm in the future)
+package-lock.json
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
