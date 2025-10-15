@@ -1,9 +1,3 @@
-
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
     apiKey: "AIzaSyAB8uHkJNm_8OtGGCO2f6g_3k2ehFsCzT0",
     authDomain: "collapse-700c3.firebaseapp.com",
@@ -41,15 +35,14 @@ const S = 80;
 const X = 0;
 const Y = 80;
 
-const boxColors = [
-    "#555555",
-    "#22baac",
-    "#ffbe53",
-    "#ee6984",
-    "#4b6da4",
-    "#845584",
-    "#555555",
-];
+const boxColors = {
+    1: "#22baac",
+    2: "#ffbe53",
+    3: "#ee6984",
+    4: "#4b6da4",
+    5: "#845584",
+    6: "#2c2c2c",
+}
 
 class Box {
     constructor(n, x, y) {
@@ -61,27 +54,28 @@ class Box {
         square(this.x, this.y, S);
 
         textSize(0.7 * S);
+        let x = this.x + S * 0.5
+        let y = this.y + S * 0.55
+        if (this.n < 6) {
+            fill(255);
+            text(this.n, x, y);
+        }
 
-        let yFactor = 0.55;
-        let xFactor = this.n > 9 ? 0.48 : 0.5;
-        let x = this.x + S * xFactor;
-        let y = this.y + S * yFactor;
-        fill(255);
-        text(this.n, x, y);
     }
 }
 
 class NumberGrid {
-    constructor(w, h, seed = Date.now() % m, moves = "") {
+    constructor(w, h, seed = Date.now(), moves = "") {
         this.w = w;
         this.h = h;
         this.gameOver = false;
         this.score = 0;
         this.clicks = 0;
         this.settled = true;
-        this.seed = seed % m;
+        this.seed = seed;
         this.state = seed % m;
         this.moves = [];
+        this.maxGen = 3
         for (let i = 0; i < this.w; i++) {
             this[i] = [];
             for (let j = 0; j < this.h; j++) {
@@ -91,7 +85,7 @@ class NumberGrid {
             }
         }
 
-        this.applyGravityAndRefill();
+        this.refill();
         if (moves.length) {
             let tic = performance.now();
             for (let c of moves) {
@@ -111,7 +105,7 @@ class NumberGrid {
 
             let toc = performance.now();
 
-            // console.log(`Replayed ${moves.length} moves in ${toc - tic} ms`);
+            console.log(`Replayed ${moves.length} moves in ${toc - tic} ms`);
             this.gameOver = this.noLegalMoves()
         }
 
@@ -121,14 +115,16 @@ class NumberGrid {
 
     draw() {
         this.settled = true;
+        let dt = deltaTime / 16.67;
+        if (dt > 2) dt = 2
         for (let i = 0; i < this.w; i++) {
             for (let j = 0; j < this.h; j++) {
                 const box = this[i][j];
                 const targetY = Y + S * (this.h - 1 - j);
                 if (box.y < targetY || box.vy !== 0) {
                     this.settled = false;
-                    box.vy += gravity;
-                    box.y += box.vy;
+                    box.vy += gravity * dt;
+                    box.y += box.vy * dt;
                     if (box.y >= targetY && box.vy > 0) {
                         box.y = targetY;
                         if (box.vy > 1) {
@@ -144,7 +140,7 @@ class NumberGrid {
         }
     }
 
-    applyGravityAndRefill() {
+    refill() {
         for (let i = 0; i < this.w; i++) {
             this[i] = this[i].filter((b) => b.n !== 0);
             let removedCount = this.h - this[i].length;
@@ -152,7 +148,7 @@ class NumberGrid {
                 const boxX = X + S * i;
                 const boxY = Y - S * (k + 1);
                 this.state = (this.state * a + c) % m;
-                let n = floor((4 * this.state) / m) + 1;
+                let n = floor((this.maxGen * this.state) / m) + 1;
                 this[i].push(new Box(n, boxX, boxY));
             }
         }
@@ -167,7 +163,7 @@ class NumberGrid {
                 this.gameOver = true;
                 removeItem("autoSaveSeed");
                 removeItem("autoSaveMoves");
-                saveHighScore(this.score);
+                saveHighScore(this.score, this.seed, grid.moves.join(""));
             } else {
                 storeItem("autoSaveMoves", grid.moves.join(""));
             }
@@ -189,7 +185,8 @@ class NumberGrid {
         chain.forEach(b => b.n = 0)
 
         this[i][j].n = n + 1;
-        this.applyGravityAndRefill();
+        if (n+1 == 4) this.maxGen = 4
+        this.refill();
         return scoreGain;
     }
 
@@ -246,6 +243,11 @@ class NumberGrid {
     }
 }
 
+function validateScore(seed, moves, score) {
+    let g = new NumberGrid(5, 5, seed, moves)
+    return (g.score === score)
+}
+
 let grid;
 
 let highScore;
@@ -255,6 +257,7 @@ let h = 5;
 
 let topScores = [];
 let showLeaderboard = false;
+let showAllTime = false; // Toggle between daily and all-time scores
 
 function newGame() {
     grid = new NumberGrid(w, h);
@@ -265,7 +268,7 @@ function newGame() {
 async function getOrCreateUserDocument(userId) {
     try {
         const userDoc = await db.collection('users').doc(userId).get();
-        
+
         if (!userDoc.exists) {
             // Create a new user document with a default display name
             const defaultName = `Player ${userId.substring(0, 6)}`;
@@ -308,7 +311,7 @@ async function promptForDisplayName() {
     }
 }
 
-async function saveHighScore(score) {
+async function saveHighScore(score, seed, moves) {
     if (!currentUser) {
         console.error("Cannot save score: user not signed in");
         return;
@@ -318,7 +321,9 @@ async function saveHighScore(score) {
         await db.collection('scores').add({
             userId: currentUser.uid,
             score: score,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            seed: seed,
+            moves: moves,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
         });
         console.log("Score saved successfully:", score);
 
@@ -331,26 +336,35 @@ async function saveHighScore(score) {
     }
 }
 
+
 async function fetchTodaysTopScores() {
     try {
-        // Get midnight UTC today
-        const todayMidnight = new Date();
-        todayMidnight.setUTCHours(0, 0, 0, 0);
+        let snapshot;
+        
+        if (showAllTime) {
+            // Fetch all-time scores
+            snapshot = await db.collection('scores')
+                .orderBy('score', 'desc')
+                .get();
+        } else {
+            // Fetch today's scores
+            const todayMidnight = new Date();
+            todayMidnight.setUTCHours(0, 0, 0, 0);
 
-        const snapshot = await db.collection('scores')
-            .where('timestamp', '>=', todayMidnight)
-            .orderBy('timestamp', 'desc')
-            .orderBy('score', 'desc')
-            .get();
+            snapshot = await db.collection('scores')
+                .where('timestamp', '>=', todayMidnight)
+                .orderBy('timestamp', 'desc')
+                .get();
+        }
 
-        // Filter to keep only the highest score per user
+        // Group scores by user and keep only the highest for each
         const userBestScores = new Map();
         snapshot.forEach(doc => {
             const data = doc.data();
             const userId = data.userId;
 
-            // Only keep the first (highest) score for each user
-            if (!userBestScores.has(userId)) {
+            // Keep the highest score for each user
+            if (!userBestScores.has(userId) || data.score > userBestScores.get(userId).score) {
                 userBestScores.set(userId, data);
             }
         });
@@ -380,7 +394,9 @@ async function fetchTodaysTopScores() {
     } catch (error) {
         console.error("Error fetching top scores:", error);
     }
-}function setup() {
+}
+
+function setup() {
     createCanvas(w * S, h * S + S);
     textAlign(CENTER, CENTER);
     strokeWeight(2);
@@ -390,7 +406,7 @@ async function fetchTodaysTopScores() {
             // User is signed in.
             currentUser = user;
             console.log("User signed in anonymously:", currentUser.uid);
-            
+
             // Load or create user's display name
             currentUserDisplayName = await getOrCreateUserDocument(user.uid);
             console.log("Display name:", currentUserDisplayName);
@@ -461,10 +477,19 @@ function drawLeaderboard() {
     fill(255);
     textSize(24);
     textAlign(CENTER, CENTER);
-    text("Today's Top 10", width / 2, 130);
-    
+    text(showAllTime ? "All-Time Top 10" : "Today's Top 10", width / 2, 130);
+
     // Edit name button (top right of leaderboard)
     textSize(20);
+    textAlign(RIGHT, CENTER);
+    text("✏️", width - 40, 130);
+    
+    // Toggle button (top left of leaderboard)
+    textAlign(LEFT, CENTER);
+    text(showAllTime ? "📅" : "🌍", 40, 130);
+    
+    textAlign(CENTER, CENTER);
+    textSize(24);
     textAlign(RIGHT, CENTER);
     text("✏️", width - 40, 130);
     textAlign(CENTER, CENTER);
@@ -530,6 +555,14 @@ function mousePressed() {
             // Check if clicking the edit name button in leaderboard (top right area)
             if (mouseY >= 100 && mouseY <= 160 && mouseX >= width - 80 && mouseX <= width - 20) {
                 promptForDisplayName();
+            } else if (mouseY >= 100 && mouseY <= 160 && mouseX >= 20 && mouseX <= 80) {
+                // Toggle between daily and all-time (top left of leaderboard)
+                showAllTime = !showAllTime;
+                topScores = []; // Clear scores to show loading message
+                fetchTodaysTopScores().then(() => {
+                    loop(); // Redraw once scores are loaded
+                });
+                loop(); // Redraw immediately to show loading
             } else {
                 // Clicking elsewhere on leaderboard closes it
                 showLeaderboard = false
