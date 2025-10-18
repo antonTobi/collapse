@@ -85,6 +85,10 @@ class NumberGrid {
             }
         }
 
+        this.scoreSplits = []
+
+        this.scoreSplitDiff = null
+
         this.refill();
         if (moves.length) {
             let tic = performance.now();
@@ -164,6 +168,11 @@ class NumberGrid {
                 removeItem("autoSaveSeed");
                 removeItem("autoSaveMoves");
                 saveHighScore(this.score, this.seed, grid.moves.join(""));
+                
+                // Only save splits if this is a new daily record
+                if (this.score > dailyBestScore) {
+                    saveDailySplits(this.score, this.scoreSplits);
+                }
             } else {
                 storeItem("autoSaveMoves", grid.moves.join(""));
             }
@@ -185,7 +194,14 @@ class NumberGrid {
         chain.forEach(b => b.n = 0)
 
         this[i][j].n = n + 1;
-        if (n+1 == 4) this.maxGen = 4
+        if (n + 1 == 4) this.maxGen = 4
+        this.scoreSplitDiff = null
+        if (n + 1 == 6) {
+            this.scoreSplits.push(this.score)
+            if (splits.length) {
+                this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
+            }
+        }
         this.refill();
         return scoreGain;
     }
@@ -259,10 +275,53 @@ let topScores = [];
 let showLeaderboard = false;
 let showAllTime = false; // Toggle between daily and all-time scores
 
+let splits
+let dailyBestScore = 0; // Best score achieved today
+
 function newGame() {
     grid = new NumberGrid(w, h);
     storeItem("autoSaveSeed", grid.seed);
     removeItem("autoSaveMoves");
+}
+
+function getTodayDateString() {
+    const today = new Date();
+    return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
+}
+
+function loadDailySplits() {
+    const savedData = getItem("dailySplits");
+    if (!savedData) {
+        splits = [];
+        dailyBestScore = 0;
+        return;
+    }
+    
+    const { date, splits: savedSplits, score } = savedData;
+    const today = getTodayDateString();
+    
+    if (date === today) {
+        // Same day, load the splits
+        splits = savedSplits || [];
+        dailyBestScore = score || 0;
+    } else {
+        // Different day, discard old data
+        splits = [];
+        dailyBestScore = 0;
+        removeItem("dailySplits");
+    }
+}
+
+function saveDailySplits(score, scoreSplits) {
+    const today = getTodayDateString();
+    storeItem("dailySplits", {
+        date: today,
+        score: score,
+        splits: scoreSplits
+    });
+    dailyBestScore = score;
+    splits = scoreSplits;
+    console.log("New daily record! Splits saved:", scoreSplits);
 }
 
 async function getOrCreateUserDocument(userId) {
@@ -340,7 +399,7 @@ async function saveHighScore(score, seed, moves) {
 async function fetchTodaysTopScores() {
     try {
         let snapshot;
-        
+
         if (showAllTime) {
             // Fetch all-time scores
             snapshot = await db.collection('scores')
@@ -369,25 +428,35 @@ async function fetchTodaysTopScores() {
             }
         });
 
-        // Convert to array and sort by score descending
-        let scores = Array.from(userBestScores.values());
-        scores.sort((a, b) => b.score - a.score);
-        scores = scores.slice(0, 10);
-
-        // Fetch display names for all users in the top 10
-        const userIds = scores.map(s => s.userId);
+        // Fetch display names for all users
+        const userIds = Array.from(userBestScores.keys());
         const userDocs = await Promise.all(
             userIds.map(uid => db.collection('users').doc(uid).get())
         );
 
         // Merge display names with scores
-        topScores = scores.map((score, index) => {
+        let scoresWithNames = userIds.map((userId, index) => {
+            const scoreData = userBestScores.get(userId);
             const userDoc = userDocs[index];
             return {
-                ...score,
-                displayName: userDoc.exists ? userDoc.data().displayName : ""
+                ...scoreData,
+                displayName: userDoc.exists ? userDoc.data().displayName : `Player ${userId.substring(0, 6)}`,
             };
         });
+
+        // Now deduplicate by display name, keeping highest score for each name
+        const nameBestScores = new Map();
+        scoresWithNames.forEach(score => {
+            const name = score.displayName;
+            if (!nameBestScores.has(name) || score.score > nameBestScores.get(name).score) {
+                nameBestScores.set(name, score);
+            }
+        });
+
+        // Convert to array, sort by score descending, and take top 10
+        topScores = Array.from(nameBestScores.values());
+        topScores.sort((a, b) => b.score - a.score);
+        topScores = topScores.slice(0, 10);
 
         console.log("Top scores fetched:", topScores);
         redraw()
@@ -420,6 +489,8 @@ function setup() {
         }
     });
 
+    loadDailySplits();
+
     let autoSaveSeed = getItem("autoSaveSeed");
     if (autoSaveSeed !== null) {
         let moves = getItem("autoSaveMoves") || "";
@@ -432,6 +503,7 @@ function setup() {
     } else {
         newGame();
     }
+
 }
 
 function draw() {
@@ -447,10 +519,26 @@ function draw() {
 
     textSize(36);
     text(grid.displayScore, width / 2, 42);
-
     text("↺", width - S / 2, 42);
 
-    textSize(32)
+    if (grid.scoreSplitDiff !== null) {
+        let sign;
+        let textColor;
+        if (grid.scoreSplitDiff < 0) {
+            sign = "";
+            textColor = "red";
+        } else if (grid.scoreSplitDiff === 0) {
+            sign = "=";
+            textColor = "gray";
+        } else {
+            sign = "+";
+            textColor = "blue";
+        }
+        fill(textColor);
+        textSize(16);
+        text("(" + sign + grid.scoreSplitDiff + ")", width / 2, S - 14);
+    }
+    textSize(32);
     // Draw leaderboard toggle button (top left)
     text("🏆", S / 2, 42);
 
@@ -483,11 +571,11 @@ function drawLeaderboard() {
     textSize(20);
     textAlign(RIGHT, CENTER);
     text("✏️", width - 40, 130);
-    
+
     // Toggle button (top left of leaderboard)
     textAlign(LEFT, CENTER);
     text(showAllTime ? "📅" : "🌍", 40, 130);
-    
+
     textAlign(CENTER, CENTER);
     textSize(24);
     textAlign(RIGHT, CENTER);
