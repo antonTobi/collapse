@@ -12,6 +12,10 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+const analytics = firebase.analytics();
+
+console.log("Firebase Analytics initialized:", analytics);
+console.log("Measurement ID:", firebaseConfig.measurementId);
 
 let currentUser = null;
 let currentUserDisplayName = null;
@@ -283,6 +287,7 @@ function newGame() {
     grid = new NumberGrid(w, h);
     storeItem("autoSaveSeed", grid.seed);
     removeItem("autoSaveMoves");
+    analytics.logEvent('game_start');
 }
 
 function getTodayDateString() {
@@ -485,7 +490,7 @@ function setup() {
             currentUser = null;
             currentUserDisplayName = null;
             auth.signInAnonymously().catch(error => {
-                alert("Anonymous sign-in failed: " + error);
+                console.log("Anonymous sign-in failed: " + error);
             });
         }
     });
