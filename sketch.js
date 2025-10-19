@@ -468,10 +468,9 @@ async function fetchTopScores() {
 }
 
 function setup() {
-    createCanvas(w * S, h * S + S);
+    createCanvas(w * S, h * S + S).mousePressed(onClick);
     textAlign(CENTER, CENTER);
     strokeWeight(2);
-
     auth.onAuthStateChanged(async user => {
         if (user) {
             // User is signed in.
@@ -486,7 +485,7 @@ function setup() {
             currentUser = null;
             currentUserDisplayName = null;
             auth.signInAnonymously().catch(error => {
-                console.error("Anonymous sign-in failed:", error);
+                alert("Anonymous sign-in failed: " + error);
             });
         }
     });
@@ -619,7 +618,7 @@ function drawLeaderboard() {
     textAlign(CENTER, CENTER); // Reset alignment
 }
 
-function mousePressed() {
+function onClick() {
     if (mouseY < 80) {
         if (mouseX > width - 80) {
             // Reset button (top right)
