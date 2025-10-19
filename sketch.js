@@ -165,10 +165,11 @@ class NumberGrid {
         if (scoreGain) {
             if (this.noLegalMoves()) {
                 this.gameOver = true;
+                this.scoreSplitDiff = null;
                 removeItem("autoSaveSeed");
                 removeItem("autoSaveMoves");
                 saveHighScore(this.score, this.seed, grid.moves.join(""));
-                
+
                 // Only save splits if this is a new daily record
                 if (this.score > dailyBestScore) {
                     saveDailySplits(this.score, this.scoreSplits);
@@ -286,7 +287,7 @@ function newGame() {
 
 function getTodayDateString() {
     const today = new Date();
-    return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
+    return `${today.getUTCFullYear()}-${today.getUTCMonth() + 1}-${today.getUTCDate()}`;
 }
 
 function loadDailySplits() {
@@ -296,10 +297,10 @@ function loadDailySplits() {
         dailyBestScore = 0;
         return;
     }
-    
+
     const { date, splits: savedSplits, score } = savedData;
     const today = getTodayDateString();
-    
+
     if (date === today) {
         // Same day, load the splits
         splits = savedSplits || [];
@@ -365,7 +366,8 @@ async function promptForDisplayName() {
     if (newName && newName.trim() !== "") {
         const success = await updateDisplayName(currentUser.uid, newName.trim());
         if (success) {
-            loop(); // Redraw if leaderboard is showing
+            await fetchTopScores();
+            loop();
         }
     }
 }
@@ -387,7 +389,7 @@ async function saveHighScore(score, seed, moves) {
         console.log("Score saved successfully:", score);
 
         // Fetch and display the leaderboard after saving
-        await fetchTodaysTopScores();
+        await fetchTopScores();
         showLeaderboard = true;
         loop(); // Redraw to show leaderboard
     } catch (error) {
@@ -396,7 +398,7 @@ async function saveHighScore(score, seed, moves) {
 }
 
 
-async function fetchTodaysTopScores() {
+async function fetchTopScores() {
     try {
         let snapshot;
 
@@ -490,6 +492,7 @@ function setup() {
     });
 
     loadDailySplits();
+    fetchTopScores();
 
     let autoSaveSeed = getItem("autoSaveSeed");
     if (autoSaveSeed !== null) {
@@ -631,7 +634,7 @@ function mousePressed() {
 
             // Always fetch fresh scores when showing the leaderboard
             if (showLeaderboard) {
-                fetchTodaysTopScores().then(() => {
+                fetchTopScores().then(() => {
                     loop(); // Redraw once scores are loaded
                 });
             }
@@ -647,7 +650,7 @@ function mousePressed() {
                 // Toggle between daily and all-time (top left of leaderboard)
                 showAllTime = !showAllTime;
                 topScores = []; // Clear scores to show loading message
-                fetchTodaysTopScores().then(() => {
+                fetchTopScores().then(() => {
                     loop(); // Redraw once scores are loaded
                 });
                 loop(); // Redraw immediately to show loading
