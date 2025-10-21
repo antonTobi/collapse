@@ -46,6 +46,7 @@ const boxColors = {
     4: "#4b6da4",
     5: "#845584",
     6: "#2c2c2c",
+    6: "#3c3c3c",
 }
 
 class Box {
@@ -59,10 +60,14 @@ class Box {
 
         textSize(0.7 * S);
         let x = this.x + S * 0.5
-        let y = this.y + S * 0.55
+        let y = this.y + S * 0.5
         if (this.n < 6) {
             fill(255);
-            text(this.n, x, y);
+            text(this.n, x, y + 0.05 * S);
+        } else if (showPolyminoes) {
+            if (this.p) {
+                drawShape(this.p, x, y, 12, 250);
+            }
         }
 
     }
@@ -187,8 +192,12 @@ class NumberGrid {
 
     do(i, j) {
         let n = this[i][j].n;
-        if (n > 5) return 0;
-        let chain = this.getChain(i, j);
+        if (n > 5) {
+            showPolyminoes = !showPolyminoes;
+            storeItem("showPolyminoes", showPolyminoes);
+            return 0;
+        }
+        let [chain, coords] = this.getChainWithCoords(i, j);
         if (chain.length < 2) return 0;
         this.moves.push(alphabet[5 * j + i]);
         let scoreGain = n * chain.length;
@@ -205,6 +214,11 @@ class NumberGrid {
             this.scoreSplits.push(this.score)
             if (splits.length) {
                 this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
+            }
+            if (true || chain.length == 5) {
+                this[i][j].p = coords
+                let pentomino = identifyPentomino(coords);
+                // console.log("Identified pentomino:", pentomino);
             }
         }
         this.refill();
@@ -231,13 +245,13 @@ class NumberGrid {
         }
     }
 
-    getChain(i, j) {
+    getChainWithCoords(i, j) {
         let visited = new Set();
         let visitedCoords = []
         let stack = [];
         stack.push([i, j]);
         visited.add(this[i][j]);
-        visitedCoords.push([i, j])
+        visitedCoords.push([i, -j])
         let n = this[i][j].n;
         while (stack.length) {
             [i, j] = stack.pop();
@@ -245,17 +259,17 @@ class NumberGrid {
                 if (b.n == n && !visited.has(b)) {
                     stack.push([bi, bj]);
                     visited.add(b);
-                    visitedCoords.push([bi, bj])
+                    visitedCoords.push([bi, -bj])
                 }
             }
         }
-        return [...visited]
+        return [[...visited], visitedCoords];
     }
 
     noLegalMoves() {
         for (let i = 0; i < this.w; i++) {
             for (let j = 0; j < this.h; j++) {
-                if (this[i][j].n < 6 && this.getChain(i, j).length > 1) {
+                if (this[i][j].n < 6 && this.getChainWithCoords(i, j)[0].length > 1) {
                     return false;
                 }
             }
@@ -276,9 +290,12 @@ let highScore;
 let w = 5;
 let h = 5;
 
-let topScores = [];
+let topScoresDaily = [];
+let topScoresAllTime = [];
 let showLeaderboard = false;
 let showAllTime = false; // Toggle between daily and all-time scores
+let isLoadingScores = false; // Track whether scores are being fetched
+let showPolyminoes
 
 let splits
 let dailyBestScore = 0; // Best score achieved today
@@ -403,11 +420,12 @@ async function saveHighScore(score, seed, moves) {
 }
 
 
-async function fetchTopScores() {
+async function fetchTopScores(fetchAllTime = showAllTime) {
+    isLoadingScores = true;
     try {
         let snapshot;
 
-        if (showAllTime) {
+        if (fetchAllTime) {
             // Fetch all-time scores
             snapshot = await db.collection('scores')
                 .orderBy('score', 'desc')
@@ -461,14 +479,23 @@ async function fetchTopScores() {
         });
 
         // Convert to array, sort by score descending, and take top 10
-        topScores = Array.from(nameBestScores.values());
-        topScores.sort((a, b) => b.score - a.score);
-        topScores = topScores.slice(0, 10);
+        let scores = Array.from(nameBestScores.values());
+        scores.sort((a, b) => b.score - a.score);
+        scores = scores.slice(0, 10);
 
-        console.log("Top scores fetched:", topScores);
+        // Cache the results
+        if (fetchAllTime) {
+            topScoresAllTime = scores;
+        } else {
+            topScoresDaily = scores;
+        }
+
+        console.log(`Top scores fetched (${fetchAllTime ? 'all-time' : 'daily'}):`, scores);
+        isLoadingScores = false;
         redraw()
     } catch (error) {
         console.error("Error fetching top scores:", error);
+        isLoadingScores = false;
     }
 }
 
@@ -496,7 +523,9 @@ function setup() {
     });
 
     loadDailySplits();
-    fetchTopScores();
+    // Fetch both daily and all-time scores on page load
+    fetchTopScores(false); // Daily scores
+    fetchTopScores(true);  // All-time scores
 
     let autoSaveSeed = getItem("autoSaveSeed");
     if (autoSaveSeed !== null) {
@@ -509,6 +538,11 @@ function setup() {
         );
     } else {
         newGame();
+    }
+
+    showPolyminoes = getItem("showPolyminoes")
+    if (showPolyminoes === null) {
+        showPolyminoes = true;
     }
 
 }
@@ -590,13 +624,21 @@ function drawLeaderboard() {
     textAlign(CENTER, CENTER);
     textSize(24);
 
-    if (topScores.length === 0) {
-        // Show loading message
+    // Get the appropriate cached scores
+    let topScores = showAllTime ? topScoresAllTime : topScoresDaily;
+
+    if (topScores.length === 0 && isLoadingScores) {
+        // Show loading message only if no cached scores and currently loading
         textSize(18);
         fill(200);
         text("Fetching scores...", width / 2, height / 2);
+    } else if (topScores.length === 0) {
+        // Show "no scores" message when loaded but empty
+        textSize(18);
+        fill(200);
+        text(showAllTime ? "No scores yet." : "No scores yet today.", width / 2, height / 2);
     } else {
-        // Scores
+        // Scores (showing cached scores, even while refreshing)
         textSize(16);
         textAlign(LEFT, CENTER);
         let y = 170;
@@ -636,14 +678,14 @@ function onClick() {
             // Leaderboard toggle button (top left)
             showLeaderboard = !showLeaderboard;
 
-            // Always fetch fresh scores when showing the leaderboard
+            // Fetch fresh scores in the background when showing the leaderboard
             if (showLeaderboard) {
-                fetchTopScores().then(() => {
+                fetchTopScores(showAllTime).then(() => {
                     loop(); // Redraw once scores are loaded
                 });
             }
 
-            loop(); // Redraw to show/hide leaderboard immediately
+            loop(); // Redraw to show/hide leaderboard immediately (cached scores shown)
         }
     } else {
         if (showLeaderboard) {
@@ -653,11 +695,10 @@ function onClick() {
             } else if (mouseY >= 100 && mouseY <= 160 && mouseX >= 20 && mouseX <= 80) {
                 // Toggle between daily and all-time (top left of leaderboard)
                 showAllTime = !showAllTime;
-                topScores = []; // Clear scores to show loading message
-                fetchTopScores().then(() => {
+                fetchTopScores(showAllTime).then(() => {
                     loop(); // Redraw once scores are loaded
                 });
-                loop(); // Redraw immediately to show loading
+                loop(); // Redraw immediately (will show cached scores if available)
             } else {
                 // Clicking elsewhere on leaderboard closes it
                 showLeaderboard = false
@@ -667,4 +708,53 @@ function onClick() {
         }
     }
     redraw();
+}
+
+
+
+function drawShape(shape, centerX, centerY, cellSize, color) {
+
+    // 1. Determine the bounding box of the shape
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const [cx, cy] of shape) {
+        minX = min(minX, cx);
+        minY = min(minY, cy);
+        maxX = max(maxX, cx);
+        maxY = max(maxY, cy);
+    }
+
+    // 2. Calculate the shape's dimensions in cell units
+    const cellWidth = maxX - minX + 1;
+    const cellHeight = maxY - minY + 1;
+
+    // 3. Calculate the total pixel width and height
+    const pixelWidth = cellWidth * cellSize;
+    const pixelHeight = cellHeight * cellSize;
+
+    // 4. Calculate the top-left corner (starting point)
+    // This is the position (x, y) of the overall bounding box's top-left corner
+    // that results in the box being centered at (centerX, centerY).
+    const startX = centerX - pixelWidth / 2;
+    const startY = centerY - pixelHeight / 2;
+
+
+    // Draw settings
+    push()
+    fill(color);
+    strokeWeight(2)
+    // stroke(boxColors[6])
+    // 5. Iterate through the shape's cells and draw the squares
+    for (const [cx, cy] of shape) {
+        // Calculate the square's position:
+        // Start position + relative cell position * cellSize
+        const xPos = startX + (cx - minX) * cellSize;
+        const yPos = startY + (cy - minY) * cellSize;
+
+        rect(xPos, yPos, cellSize, cellSize);
+    }
+    pop();
 }
