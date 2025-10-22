@@ -1,0 +1,24 @@
+{
+  "name": "collapse",
+  "version": "1.0.0",
+  "description": "Number collapse game.",
+  "main": "pentominoes.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/antonTobi/collapse.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/antonTobi/collapse/issues"
+  },
+  "homepage": "https://github.com/antonTobi/collapse#readme",
+  "devDependencies": {
+    "@types/p5": "^1.7.6"
+  }
+}
