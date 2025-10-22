@@ -21,7 +21,7 @@ class Box {
             noStroke();
             text(this.n, x, y + 0.05 * S);
         } else if (this.showShape) {
-            drawShape(this.shape, x, y, 12, false);
+            drawShape(this.shape, x, y, 12, true);
         }
     }
 }
@@ -304,7 +304,7 @@ function drawShape(shape, centerX, centerY, cellSize, highlight) {
     push();
     strokeWeight(2);
     if (highlight) {
-        fill("white");
+        fill(bgLight);
         stroke(0);
     } else {
         noFill();
