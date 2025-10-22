@@ -41,4 +41,5 @@ const boxColors = {
 };
 
 // Background Color
-const bg = "#e4e4e4";
+const bgLight = "#e4e4e4";
+const bgDark = "#1d1d1dff";

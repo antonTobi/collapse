@@ -11,7 +11,7 @@ class Box {
         if (this.y < 1) return;
         fill(boxColors[this.n]);
         noStroke();
-        square(this.x + 1, this.y + 1, S - 2, 3);
+        square(this.x + 1, this.y + 1, S - 2);
 
         textSize(0.7 * S);
         let x = this.x + S * 0.5;
@@ -85,7 +85,7 @@ class NumberGrid {
 
     draw() {
         this.settled = true;
-        let dt = deltaTime / 16.67;
+        let dt = deltaTime / 18;
         if (dt > 2) dt = 2;
 
         for (let i = 0; i < this.w; i++) {

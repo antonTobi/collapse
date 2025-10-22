@@ -3,7 +3,7 @@
 // ============================================================================
 
 function setup() {
-    createCanvas(w * S + 2, h * S + S + 2).mousePressed(onClick);
+    createCanvas(w * S, h * S + S).mousePressed(onClick);
     textAlign(CENTER, CENTER);
     strokeWeight(2);
     
@@ -28,7 +28,7 @@ function setup() {
 }
 
 // Set background color
-document.body.style.backgroundColor = bg;
+document.body.style.backgroundColor = bgLight;
 
 // ============================================================================
 // p5.js Draw Loop
@@ -42,8 +42,8 @@ function draw() {
     
     // Draw score bar background
     noStroke();
-    fill(over ? "black" : "white");
-    rect(1, 1, w * S - 2, S - 2, 3);
+    fill(over ? "black" : bgLight);
+    rect(1, 1, w * S - 2, S - 1);
     
     // Draw score
     fill(over ? "white" : "black");
@@ -56,7 +56,14 @@ function draw() {
     text(grid.displayScore, width / 2, 42);
     
     // Draw reset button
-    text("↺", width - S / 2, 42);
+    stroke(over ? "white" : "black");
+    strokeWeight(2);
+    let resetX = width - S / 2;
+    let resetY = 42;
+    line(resetX - 10, resetY, resetX + 10, resetY);
+    line(resetX, resetY - 10, resetX, resetY + 10);
+    noStroke();
+    fill(over ? "white" : "black");
 
     // Draw score split difference if available
     if (grid.scoreSplitDiff !== null) {
@@ -78,8 +85,16 @@ function draw() {
     }
     
     textSize(32);
-    // Draw leaderboard toggle button (top left)
-    text("🏆", S / 2, 42);
+    // Draw leaderboard toggle button
+    stroke(over ? "white" : "black");
+    strokeWeight(2);
+    strokeCap(PROJECT)
+    let iconX = S / 2;
+    let iconY = 42;
+    line(iconX - 10, iconY - 8, iconX + 10, iconY - 8);
+    line(iconX - 10, iconY, iconX + 10, iconY);
+    line(iconX - 10, iconY + 8, iconX + 10, iconY + 8);
+    noStroke();
 
     // Draw leaderboard if toggled on
     if (showLeaderboard) {
@@ -100,7 +115,7 @@ function drawLeaderboard() {
     // Semi-transparent background
     fill(0, 0, 0, 220);
     stroke(0);
-    rect(15, 95, width - 30, height - 110, 3);
+    rect(15, 95, width - 30, height - 110);
     noStroke();
 
     // Title
