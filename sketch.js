@@ -14,8 +14,8 @@ function setup() {
     loadDailySplits();
     
     // Fetch both daily and all-time scores on page load
-    fetchTopScores(false); // Daily scores
-    fetchTopScores(true);  // All-time scores
+    // fetchTopScores(false); // Daily scores
+    // fetchTopScores(true);  // All-time scores
 
     // Restore saved game or start new game
     let autoSaveSeed = getItem("autoSaveSeed");
