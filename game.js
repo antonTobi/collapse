@@ -180,13 +180,14 @@ class NumberGrid {
                 this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
             }
             box.shape = coords;
-            for (let i = 0; i < this.w; i ++) {
-                for (let j = 0; j < this.h; j ++) {
-                    if (this[i][j].showShape) {
-                        box.showShape = true;
-                    }
-                }
-            }
+            box.showShape = true;
+            // for (let i = 0; i < this.w; i ++) {
+            //     for (let j = 0; j < this.h; j ++) {
+            //         if (this[i][j].showShape) {
+            //             box.showShape = true;
+            //         }
+            //     }
+            // }
             let pentomino = identifyPentomino(coords);
         }
 
