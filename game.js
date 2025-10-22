@@ -308,7 +308,7 @@ function drawShape(shape, centerX, centerY, cellSize, highlight) {
         stroke(0);
     } else {
         noFill();
-        stroke(60);
+        stroke(0);
     }
 
 

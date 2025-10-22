@@ -37,7 +37,7 @@ const boxColors = {
     3: "#ee6984",
     4: "#4b6da4",
     5: "#845584",
-    6: "#2c2c2c",
+    6: "#424242",
 };
 
 // Background Color
