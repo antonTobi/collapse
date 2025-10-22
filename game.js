@@ -20,8 +20,8 @@ class Box {
             fill(255, 230);
             noStroke();
             text(this.n, x, y + 0.05 * S);
-        } else if (this.showShape) {
-            drawShape(this.shape, x, y, 12, true);
+        } else {
+            drawShape(this.shape, x, y, 12, this.showShape);
         }
     }
 }
@@ -308,7 +308,7 @@ function drawShape(shape, centerX, centerY, cellSize, highlight) {
         stroke(0);
     } else {
         noFill();
-        stroke(100);
+        stroke(60);
     }
 
 
