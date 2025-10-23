@@ -34,7 +34,6 @@ class NumberGrid {
     constructor(w, h, seed = Date.now(), moves = "") {
         this.w = w;
         this.h = h;
-        this.gameOver = false;
         this.score = 0;
         this.clicks = 0;
         this.settled = true;
@@ -77,9 +76,8 @@ class NumberGrid {
             let toc = performance.now();
 
             console.log(`Replayed ${moves.length} moves in ${toc - tic} ms`);
-            this.gameOver = this.noLegalMoves();
         }
-
+        this.gameOver = this.noLegalMoves();
         this.displayScore = this.score;
     }
 

@@ -97,10 +97,31 @@ async function getOrCreateUserDocument(userId) {
 
 async function updateDisplayName(userId, newName) {
     try {
-        await db.collection('users').doc(userId).update({
+        const batch = db.batch();
+        
+        // Update user document
+        const userRef = db.collection('users').doc(userId);
+        batch.update(userRef, {
             displayName: newName,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
+
+        // Update all-time high score if it exists
+        const allTimeRef = db.collection('highscores').doc(userId);
+        const allTimeDoc = await allTimeRef.get();
+        if (allTimeDoc.exists) {
+            batch.update(allTimeRef, { displayName: newName });
+        }
+
+        // Update daily high score if it exists (for today)
+        const today = getTodayDateString();
+        const dailyRef = db.collection('dailyhighscores').doc(today).collection('scores').doc(userId);
+        const dailyDoc = await dailyRef.get();
+        if (dailyDoc.exists) {
+            batch.update(dailyRef, { displayName: newName });
+        }
+
+        await batch.commit();
         currentUserDisplayName = newName;
         console.log("Display name updated to:", newName);
         return true;
@@ -132,14 +153,51 @@ async function saveHighScore(score, seed, moves) {
     }
 
     try {
-        await db.collection('scores').add({
+        const timestamp = firebase.firestore.FieldValue.serverTimestamp();
+        const scoreData = {
             userId: currentUser.uid,
             score: score,
             seed: seed,
             moves: moves,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        });
+            timestamp: timestamp,
+        };
+
+        // Save to scores collection (full history)
+        await db.collection('scores').add(scoreData);
         console.log("Score saved successfully:", score);
+
+        // Update all-time high score
+        const allTimeRef = db.collection('highscores').doc(currentUser.uid);
+        const allTimeDoc = await allTimeRef.get();
+        
+        if (!allTimeDoc.exists || score > allTimeDoc.data().score) {
+            await allTimeRef.set({
+                userId: currentUser.uid,
+                displayName: currentUserDisplayName,
+                score: score,
+                seed: seed,
+                moves: moves,
+                timestamp: timestamp,
+            });
+            console.log("New all-time high score saved!");
+        }
+
+        // Update daily high score
+        const today = getTodayDateString();
+        const dailyRef = db.collection('dailyhighscores').doc(today).collection('scores').doc(currentUser.uid);
+        const dailyDoc = await dailyRef.get();
+        
+        if (!dailyDoc.exists || score > dailyDoc.data().score) {
+            await dailyRef.set({
+                userId: currentUser.uid,
+                displayName: currentUserDisplayName,
+                score: score,
+                seed: seed,
+                moves: moves,
+                timestamp: timestamp,
+            });
+            console.log("New daily high score saved!");
+        }
 
         // Fetch and display the leaderboard after saving
         await fetchTopScores();
@@ -156,60 +214,34 @@ async function fetchTopScores(fetchAllTime = showAllTime) {
         let snapshot;
 
         if (fetchAllTime) {
-            // Fetch all-time scores
-            snapshot = await db.collection('scores')
+            // Fetch all-time high scores (one per user with display name already included)
+            snapshot = await db.collection('highscores')
                 .orderBy('score', 'desc')
+                .limit(10)
                 .get();
         } else {
-            // Fetch today's scores
-            const todayMidnight = new Date();
-            todayMidnight.setUTCHours(0, 0, 0, 0);
-
-            snapshot = await db.collection('scores')
-                .where('timestamp', '>=', todayMidnight)
-                .orderBy('timestamp', 'desc')
+            // Fetch today's high scores (one per user with display name already included)
+            const today = getTodayDateString();
+            snapshot = await db.collection('dailyhighscores').doc(today).collection('scores')
+                .orderBy('score', 'desc')
+                .limit(10)
                 .get();
         }
 
-        // Group scores by user and keep only the highest for each
-        const userBestScores = new Map();
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            const userId = data.userId;
+        // Extract scores with display names already included
+        let scores = snapshot.docs.map(doc => doc.data());
 
-            // Keep the highest score for each user
-            if (!userBestScores.has(userId) || data.score > userBestScores.get(userId).score) {
-                userBestScores.set(userId, data);
-            }
-        });
-
-        // Fetch display names for all users
-        const userIds = Array.from(userBestScores.keys());
-        const userDocs = await Promise.all(
-            userIds.map(uid => db.collection('users').doc(uid).get())
-        );
-
-        // Merge display names with scores
-        let scoresWithNames = userIds.map((userId, index) => {
-            const scoreData = userBestScores.get(userId);
-            const userDoc = userDocs[index];
-            return {
-                ...scoreData,
-                displayName: userDoc.exists ? userDoc.data().displayName : `Player ${userId.substring(0, 6)}`,
-            };
-        });
-
-        // Now deduplicate by display name, keeping highest score for each name
+        // Deduplicate by display name, keeping highest score for each name
         const nameBestScores = new Map();
-        scoresWithNames.forEach(score => {
-            const name = score.displayName;
+        scores.forEach(score => {
+            const name = score.displayName || `Player ${score.userId.substring(0, 6)}`;
             if (!nameBestScores.has(name) || score.score > nameBestScores.get(name).score) {
-                nameBestScores.set(name, score);
+                nameBestScores.set(name, { ...score, displayName: name });
             }
         });
 
         // Convert to array, sort by score descending, and take top 10
-        let scores = Array.from(nameBestScores.values());
+        scores = Array.from(nameBestScores.values());
         scores.sort((a, b) => b.score - a.score);
         scores = scores.slice(0, 10);
 
