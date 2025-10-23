@@ -66,23 +66,23 @@ function draw() {
     fill(over ? "white" : "black");
 
     // Draw score split difference if available
-    if (grid.scoreSplitDiff !== null) {
-        let sign;
-        let textColor;
-        if (grid.scoreSplitDiff < 0) {
-            sign = "";
-            textColor = "red";
-        } else if (grid.scoreSplitDiff === 0) {
-            sign = "=";
-            textColor = "gray";
-        } else {
-            sign = "+";
-            textColor = "blue";
-        }
-        fill(textColor);
-        textSize(16);
-        text("(" + sign + grid.scoreSplitDiff + ")", width / 2, S - 14);
-    }
+    // if (grid.scoreSplitDiff !== null) {
+    //     let sign;
+    //     let textColor;
+    //     if (grid.scoreSplitDiff < 0) {
+    //         sign = "";
+    //         textColor = "red";
+    //     } else if (grid.scoreSplitDiff === 0) {
+    //         sign = "=";
+    //         textColor = "gray";
+    //     } else {
+    //         sign = "+";
+    //         textColor = "blue";
+    //     }
+    //     fill(textColor);
+    //     textSize(16);
+    //     text("(" + sign + grid.scoreSplitDiff + ")", width / 2, S - 14);
+    // }
     
     textSize(32);
     // Draw leaderboard toggle button
