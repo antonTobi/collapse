@@ -304,10 +304,10 @@ function drawShape(shape, centerX, centerY, cellSize, highlight) {
     strokeWeight(2);
     if (highlight) {
         fill(bgLight);
-        stroke(0);
+        stroke(boxColors[6]);
     } else {
         noFill();
-        stroke(0);
+        stroke(boxColors[6]);
     }
 
 

@@ -2,6 +2,8 @@
 // p5.js Setup
 // ============================================================================
 
+let showMoveCount
+
 function setup() {
     createCanvas(w * S, h * S + S).mousePressed(onClick);
     textAlign(CENTER, CENTER);
@@ -20,6 +22,11 @@ function setup() {
         grid = new NumberGrid(w, h, autoSaveSeed, moves.split(""));
     } else {
         newGame();
+    }
+
+    showMoveCount = getItem("showMoveCount")
+    if (showMoveCount === null) {
+        showMoveCount = false
     }
 }
 
@@ -47,9 +54,16 @@ function draw() {
         grid.displayScore++;
     }
 
-    noStroke();
-    textSize(36);
-    text(grid.displayScore, width / 2, 42);
+    if (showMoveCount) {
+        textSize(30)
+        text(grid.moves.length, width / 2, 36)
+        textSize(16)
+        text("moves", width/2, 56)
+    } else {
+        textSize(36)
+        text(grid.displayScore, width / 2, 42);
+    }
+
     
     // Draw reset button
     stroke(over ? "white" : "black");
@@ -202,6 +216,9 @@ function onClick() {
             }
 
             loop(); // Redraw to show/hide leaderboard immediately (cached scores shown)
+        } else {
+            showMoveCount = !showMoveCount
+            storeItem("showMoveCount", showMoveCount)
         }
     } else {
         if (showLeaderboard) {

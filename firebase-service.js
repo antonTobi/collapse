@@ -200,9 +200,10 @@ async function saveHighScore(score, seed, moves) {
         }
 
         // Fetch and display the leaderboard after saving
-        await fetchTopScores();
-        showLeaderboard = true;
-        loop(); // Redraw to show leaderboard
+        // await fetchTopScores();
+        // showLeaderboard = true;
+        // loop();
+
     } catch (error) {
         console.error("Error saving score:", error);
     }
