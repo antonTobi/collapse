@@ -569,17 +569,17 @@ function mouseReleased() {
 
 function handleTouchStart(event) {
     if (!showMenu) return;
-    if (currentMenuTab !== "achievements" && currentMenuTab !== "shapes") return;
     
     let touch = event.touches[0];
     let rect = canvas.elt.getBoundingClientRect();
     let touchY = touch.clientY - rect.top;
     
-    // Check if touch is in scrollable area
-    if (touchY >= 95 && touchY <= height - 15) {
+    // Only handle scrolling for achievement/shapes tabs in the scrollable area
+    if ((currentMenuTab === "achievements" || currentMenuTab === "shapes") && 
+        touchY >= 95 && touchY <= height - 15) {
         menuDragStartY = touchY;
         menuDragStartScrollY = menuScrollY;
-        event.preventDefault();
+        // Don't prevent default yet - only prevent if user actually drags
     }
 }
 
@@ -593,32 +593,36 @@ function handleTouchMove(event) {
     let touchY = touch.clientY - rect.top;
     
     let deltaY = menuDragStartY - touchY;
-    menuScrollY = menuDragStartScrollY + deltaY;
-    redraw();
-    event.preventDefault();
+    
+    // Only scroll and prevent default if moved more than 5 pixels
+    if (Math.abs(deltaY) > 5) {
+        menuScrollY = menuDragStartScrollY + deltaY;
+        redraw();
+        event.preventDefault(); // Prevent scrolling the page
+    }
 }
 
 function handleTouchEnd(event) {
+    // Only handle if we started tracking a potential scroll
     if (menuDragStartY !== null) {
-        // Check if it was a tap vs drag
-        let wasTap = true;
+        let wasDrag = false;
+        
         if (event.changedTouches.length > 0) {
             let touch = event.changedTouches[0];
             let rect = canvas.elt.getBoundingClientRect();
             let touchY = touch.clientY - rect.top;
             let dragDistance = Math.abs(touchY - menuDragStartY);
-            wasTap = dragDistance < 5;
+            wasDrag = dragDistance > 5;
             
-            // If it was just a tap in the menu area, close the menu
-            if (showMenu && wasTap && touchY >= 95 && touchY <= height - 15) {
-                showMenu = false;
-                redraw();
+            // If it was a drag, prevent the click event from firing
+            if (wasDrag) {
+                event.preventDefault();
             }
+            // If it was just a tap, let onClick handle it (don't close menu here)
         }
         
         menuDragStartY = null;
         menuDragStartScrollY = null;
-        event.preventDefault();
     }
 }
 
