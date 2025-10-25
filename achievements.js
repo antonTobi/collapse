@@ -231,8 +231,8 @@ function checkAchievements(eventType, data) {
 
 function checkScoreAchievements(data) {
     // Check score-based achievements
-    if (data.score >= 10000) {
-        unlockAchievement("score_10000");
+    if (data.score >= 5000) {
+        unlockAchievement("score_5000");
     }
     
     if (data.scoreGain == 100) {
