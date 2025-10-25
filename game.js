@@ -21,7 +21,7 @@ class Box {
             noStroke();
             text(this.n, x, y + 0.05 * S);
         } else {
-            drawShape(this.shape, x, y, 12, this.showShape);
+            drawShape(this.shape, x, y, 12, 200);
         }
     }
 }
@@ -35,7 +35,6 @@ class NumberGrid {
         this.w = w;
         this.h = h;
         this.score = 0;
-        this.clicks = 0;
         this.settled = true;
         this.seed = seed;
         this.state = seed % m;
@@ -53,10 +52,13 @@ class NumberGrid {
 
         this.scoreSplits = [];
         this.scoreSplitDiff = null;
+        this.polyominoList = [];
+        this.isReplaying = false;
 
         this.refill();
 
         if (moves.length) {
+            this.isReplaying = true;
             let tic = performance.now();
             for (let c of moves) {
                 let k = tebahpla[c];
@@ -76,6 +78,7 @@ class NumberGrid {
             let toc = performance.now();
 
             console.log(`Replayed ${moves.length} moves in ${toc - tic} ms`);
+            this.isReplaying = false;
         }
         this.gameOver = this.noLegalMoves();
         this.displayScore = this.score;
@@ -143,6 +146,11 @@ class NumberGrid {
                 if (this.score > dailyBestScore) {
                     saveDailySplits(this.score, this.scoreSplits);
                 }
+
+                // Check achievements on game over (only for live games)
+                if (!this.isReplaying) {
+                    checkAchievements("game_over", { score: this.score });
+                }
             } else {
                 storeItem("autoSaveMoves", grid.moves.join(""));
             }
@@ -164,7 +172,11 @@ class NumberGrid {
         this.moves.push(alphabet[5 * j + i]);
         let scoreGain = n * chain.length;
         this.score += scoreGain;
-        this.clicks += 1;
+
+        // Check move-based achievements (only during live gameplay)
+        if (!this.isReplaying) {
+            checkAchievements("move_made", { scoreGain });
+        }
 
         chain.forEach(b => b.n = 0);
 
@@ -172,7 +184,21 @@ class NumberGrid {
         if (n + 1 == 4) this.maxGen = 4;
 
         this.scoreSplitDiff = null;
+
+
+
+
+
         if (n + 1 == 6) {
+            this.polyominoList.push(coords);
+            // Check shape achievements whenever a new shape is created (only during live gameplay)
+            if (!this.isReplaying) {
+                checkAchievements("shape_created", {});
+                // Invalidate shape match cache
+                if (typeof cachedShapeMatches !== 'undefined') {
+                    cachedShapeMatches = null;
+                }
+            }
             this.scoreSplits.push(this.score);
             if (splits.length) {
                 this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
@@ -186,7 +212,6 @@ class NumberGrid {
             //         }
             //     }
             // }
-            let pentomino = identifyPentomino(coords);
         }
 
         this.refill();
@@ -263,17 +288,23 @@ let h = 5;
 // ============================================================================
 
 function newGame() {
+    // Reload if new version is available
+    if (typeof newVersionAvailable !== 'undefined' && newVersionAvailable) {
+        console.log('Reloading to new version...');
+        window.location.reload(true);
+        return;
+    }
+    
     grid = new NumberGrid(w, h);
     storeItem("autoSaveSeed", grid.seed);
     removeItem("autoSaveMoves");
-    analytics.logEvent('game_start');
 }
 
 // ============================================================================
 // Drawing Utilities
 // ============================================================================
 
-function drawShape(shape, centerX, centerY, cellSize, highlight) {
+function drawShape(shape, centerX, centerY, cellSize, fillColor) {
     // 1. Determine the bounding box of the shape
     let minX = Infinity;
     let minY = Infinity;
@@ -296,26 +327,20 @@ function drawShape(shape, centerX, centerY, cellSize, highlight) {
     const pixelHeight = cellHeight * cellSize;
 
     // 4. Calculate the top-left corner (starting point)
-    const startX = centerX - pixelWidth / 2;
-    const startY = centerY - pixelHeight / 2;
+    const startX = centerX - Math.floor(pixelWidth / 2);
+    const startY = centerY - Math.floor(pixelHeight / 2);
 
     // Draw settings
     push();
-    strokeWeight(2);
-    if (highlight) {
-        fill(bgLight);
-        stroke(boxColors[6]);
-    } else {
-        noFill();
-        stroke(boxColors[6]);
-    }
+    noStroke();
+    fill(fillColor);
 
-
-    // 5. Iterate through the shape's cells and draw the squares
+    // 5. Iterate through the shape's cells and draw the squares with 1px margin
     for (const [cx, cy] of shape) {
         const xPos = startX + (cx - minX) * cellSize;
         const yPos = startY + (cy - minY) * cellSize;
-        rect(xPos, yPos, cellSize, cellSize);
+        // Draw with 1px margin (inset by 1px, reduce size by 2px)
+        rect(xPos + 1, yPos + 1, cellSize - 2, cellSize - 2);
     }
 
     pop();

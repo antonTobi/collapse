@@ -2,10 +2,6 @@
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
-const analytics = firebase.analytics();
-
-console.log("Firebase Analytics initialized:", analytics);
-console.log("Measurement ID:", firebaseConfig.measurementId);
 
 // User State
 let currentUser = null;
@@ -215,17 +211,17 @@ async function fetchTopScores(fetchAllTime = showAllTime) {
         let snapshot;
 
         if (fetchAllTime) {
-            // Fetch all-time high scores (one per user with display name already included)
+            // Fetch all-time high scores (fetch 16 to account for deduplication)
             snapshot = await db.collection('highscores')
                 .orderBy('score', 'desc')
-                .limit(10)
+                .limit(16)
                 .get();
         } else {
-            // Fetch today's high scores (one per user with display name already included)
+            // Fetch today's high scores (fetch 16 to account for deduplication)
             const today = getTodayDateString();
             snapshot = await db.collection('dailyhighscores').doc(today).collection('scores')
                 .orderBy('score', 'desc')
-                .limit(10)
+                .limit(16)
                 .get();
         }
 
