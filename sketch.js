@@ -11,9 +11,17 @@ let menuDragStartScrollY = null;
 let cachedShapeMatches = null; // Cache for shape matching results
 let currentAppVersion = null; // Track current app version
 let newVersionAvailable = false; // Flag if new version detected
+let canvas; // Canvas reference for event listeners
 
 function setup() {
-    createCanvas(w * S, h * S + S).mousePressed(onClick);
+    canvas = createCanvas(w * S, h * S + S);
+    canvas.mousePressed(onClick);
+    
+    // Add touch event listeners for mobile support
+    canvas.elt.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.elt.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.elt.addEventListener('touchend', handleTouchEnd, { passive: false });
+    
     textAlign(CENTER, CENTER);
     strokeWeight(2);
     
@@ -528,6 +536,18 @@ function mouseDragged() {
     }
 }
 
+function touchMoved() {
+    // Handle touch scrolling in achievement tabs (for p5.js touch events)
+    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes") && menuDragStartY !== null) {
+        // Use touches array if available, otherwise fall back to mouseY
+        let currentY = touches.length > 0 ? touches[0].y : mouseY;
+        let deltaY = menuDragStartY - currentY;
+        menuScrollY = menuDragStartScrollY + deltaY;
+        redraw();
+        return false;
+    }
+}
+
 function mouseReleased() {
     // End drag scrolling
     if (menuDragStartY !== null) {
@@ -538,8 +558,67 @@ function mouseReleased() {
         // If it was just a click (not a drag), close the menu
         if (showMenu && dragDistance < 5 && mouseY >= 95 && mouseY <= height - 15) {
             showMenu = false;
-            loop();
+            redraw();
         }
+    }
+}
+
+// ============================================================================
+// Touch Event Handlers (for mobile devices)
+// ============================================================================
+
+function handleTouchStart(event) {
+    if (!showMenu) return;
+    if (currentMenuTab !== "achievements" && currentMenuTab !== "shapes") return;
+    
+    let touch = event.touches[0];
+    let rect = canvas.elt.getBoundingClientRect();
+    let touchY = touch.clientY - rect.top;
+    
+    // Check if touch is in scrollable area
+    if (touchY >= 95 && touchY <= height - 15) {
+        menuDragStartY = touchY;
+        menuDragStartScrollY = menuScrollY;
+        event.preventDefault();
+    }
+}
+
+function handleTouchMove(event) {
+    if (!showMenu) return;
+    if (currentMenuTab !== "achievements" && currentMenuTab !== "shapes") return;
+    if (menuDragStartY === null) return;
+    
+    let touch = event.touches[0];
+    let rect = canvas.elt.getBoundingClientRect();
+    let touchY = touch.clientY - rect.top;
+    
+    let deltaY = menuDragStartY - touchY;
+    menuScrollY = menuDragStartScrollY + deltaY;
+    redraw();
+    event.preventDefault();
+}
+
+function handleTouchEnd(event) {
+    if (menuDragStartY !== null) {
+        // Check if it was a tap vs drag
+        let wasTap = true;
+        if (event.changedTouches.length > 0) {
+            let touch = event.changedTouches[0];
+            let rect = canvas.elt.getBoundingClientRect();
+            let touchY = touch.clientY - rect.top;
+            let dragDistance = Math.abs(touchY - menuDragStartY);
+            wasTap = dragDistance < 5;
+            
+            // If it was just a tap in the menu area, close the menu
+            if (showMenu && wasTap && touchY >= 95 && touchY <= height - 15) {
+                showMenu = false;
+                redraw();
+            }
+        }
+        
+        menuDragStartY = null;
+        menuDragStartScrollY = null;
+        event.preventDefault();
     }
 }
 
