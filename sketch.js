@@ -563,6 +563,25 @@ function mouseReleased() {
     }
 }
 
+function keyPressed() {
+    if (!debug) return
+    // on keypresses 1-5, replace the box the cursor is hovering over (for debugging purposes)
+    if (key >= '1' && key <= '5') {
+        let [i, j] = grid.getCoordinates(mouseX, mouseY);
+        if (i >= 0 && i < grid.w && j >= 0 && j < grid.h) {
+            let box = grid[i][j];
+            box.n = parseInt(key);
+            box.shape = null;
+            box.showShape = false;
+            redraw();
+        }
+    }
+
+    if (key == "u") {
+        // undo
+    }
+}
+
 // ============================================================================
 // Touch Event Handlers (for mobile devices)
 // ============================================================================
