@@ -1,3 +1,3 @@
 # Collapse
 
-Number collapse game.
+A game about collapsing groups of numbered boxes.
