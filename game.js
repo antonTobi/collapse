@@ -54,6 +54,7 @@ class NumberGrid {
         this.scoreSplitDiff = null;
         this.polyominoList = [];
         this.isReplaying = false;
+        this.largestChains = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; // Track largest chain for each tile type
 
         this.refill();
 
@@ -150,6 +151,10 @@ class NumberGrid {
                 // Check achievements on game over (only for live games)
                 if (!this.isReplaying) {
                     checkAchievements("game_over", { score: this.score });
+                    // Update statistics
+                    updateStatistics(this.score, this.largestChains);
+                    // Add to game history
+                    addToGameHistory(this.score);
                 }
             } else {
                 storeItem("autoSaveMoves", grid.moves.join(""));
@@ -172,10 +177,17 @@ class NumberGrid {
         this.moves.push(alphabet[5 * j + i]);
         let scoreGain = n * chain.length;
         this.score += scoreGain;
+        
+        // Track largest chain for this tile type (only during live gameplay)
+        if (!this.isReplaying && chain.length > this.largestChains[n]) {
+            this.largestChains[n] = chain.length;
+        }
 
         // Check move-based achievements (only during live gameplay)
         if (!this.isReplaying) {
             checkAchievements("move_made", { scoreGain });
+            // Update statistics live during gameplay
+            updateStatisticsLive(this.score, this.largestChains);
         }
 
         chain.forEach(b => b.n = 0);
@@ -293,6 +305,12 @@ function newGame() {
         console.log('Reloading to new version...');
         window.location.reload(true);
         return;
+    }
+    
+    // If there's an ongoing game (not already game over), count it as completed
+    if (grid && !grid.gameOver && grid.moves.length > 0) {
+        updateStatistics(grid.score, grid.largestChains);
+        addToGameHistory(grid.score);
     }
     
     grid = new NumberGrid(w, h);

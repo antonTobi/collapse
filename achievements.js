@@ -31,6 +31,21 @@ const ACHIEVEMENTS = [
         type: "score"
     },
     {
+        id: "consecutive_3000_x3",
+        description: "Score 3000+ points in 3 consecutive games",
+        type: "consecutive"
+    },
+    {
+        id: "consecutive_5000_x5",
+        description: "Score 5000+ points in 5 consecutive games",
+        type: "consecutive"
+    },
+    {
+        id: "consecutive_7000_x7",
+        description: "Score 7000+ points in 7 consecutive games",
+        type: "consecutive"
+    },
+    {
         id: "tetrominoes",
         description: "Tetrominoes",
         type: "shapes",
@@ -53,6 +68,16 @@ const ACHIEVEMENTS = [
             [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]],
             [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]],
             [[1, 0], [0, 1], [1, 1], [2, 1], [1, 2]]
+        ]
+    },
+    {
+        id: "three_rings",
+        description: "Rings",
+        type: "shapes",
+        shapes: [
+            [[0, 0], [1, 0], [2, 0], [0, 1], [2, 1], [0, 2], [1, 2], [2, 2]],
+            [[0, 0], [1, 0], [2, 0], [0, 1], [2, 1], [0, 2], [1, 2], [2, 2]],
+            [[0, 0], [1, 0], [2, 0], [0, 1], [2, 1], [0, 2], [1, 2], [2, 2]]
         ]
     },
 
@@ -147,6 +172,19 @@ function saveAchievements() {
     storeItem("achievementData", achievementData);
 }
 
+function resetAllAchievements() {
+    // Reset all achievements to locked state (for debugging)
+    achievementData = {};
+    ACHIEVEMENTS.forEach(achievement => {
+        achievementData[achievement.id] = {
+            unlocked: false,
+            unlockedDate: null
+        };
+    });
+    saveAchievements();
+    console.log("All achievements have been reset");
+}
+
 function unlockAchievement(achievementId) {
     if (!achievementData[achievementId].unlocked) {
         achievementData[achievementId].unlocked = true;
@@ -155,6 +193,10 @@ function unlockAchievement(achievementId) {
         
         let achievement = ACHIEVEMENTS.find(a => a.id === achievementId);
         console.log(`Achievement Unlocked: ${achievement.description}`);
+        
+        // Set notification for display in top bar
+        achievementNotification = "✓ " + achievement.description;
+        achievementNotificationTime = Date.now();
         
         return true;
     }

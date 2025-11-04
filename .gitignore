@@ -5,7 +5,7 @@ dist/
 # Dependencies
 node_modules/
 
-# Package management files (if you decide not to use npm in the future)
+# Package management files
 package-lock.json
 
 # Editor files

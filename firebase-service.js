@@ -277,6 +277,11 @@ function initializeAuth() {
             // Load or create user's display name
             currentUserDisplayName = await getOrCreateUserDocument(user.uid);
             console.log("Display name:", currentUserDisplayName);
+            
+            // Initialize statistics from database if this is first time
+            if (typeof initializeStatisticsFromDatabase === 'function') {
+                initializeStatisticsFromDatabase();
+            }
         } else {
             // User is signed out.
             currentUser = null;

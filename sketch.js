@@ -4,7 +4,7 @@
 
 let showMoveCount;
 let showMenu = false;
-let currentMenuTab = "daily"; // "daily", "alltime", "achievements", "shapes"
+let currentMenuTab = "daily"; // "daily", "alltime", "achievements", "shapes", "statistics", "history"
 let menuScrollY = 0;
 let menuDragStartY = null;
 let menuDragStartScrollY = null;
@@ -12,6 +12,23 @@ let cachedShapeMatches = null; // Cache for shape matching results
 let currentAppVersion = null; // Track current app version
 let newVersionAvailable = false; // Flag if new version detected
 let canvas; // Canvas reference for event listeners
+
+let debug = false; // Set to true to enable debug features
+
+// Achievement notification
+let achievementNotification = null; // Text to display
+let achievementNotificationTime = 0; // Timestamp when notification was set
+const ACHIEVEMENT_NOTIFICATION_DURATION = 4000; // 4 seconds
+
+// Statistics
+let statistics = {
+    personalBest: 0,
+    largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    gamesPlayed: 0
+};
+
+// Game History
+let gameHistory = []; // Array to store last 10 scores
 
 function setup() {
     canvas = createCanvas(w * S, h * S + S);
@@ -34,9 +51,15 @@ function setup() {
     // Initialize achievement system
     initializeAchievements();
     
+    // Initialize statistics
+    initializeStatistics();
+    
+    // Initialize game history
+    initializeGameHistory();
+    
     // Restore last opened menu tab
     let savedMenuTab = getItem("currentMenuTab");
-    if (savedMenuTab !== null && ["daily", "alltime", "achievements", "shapes"].includes(savedMenuTab)) {
+    if (savedMenuTab !== null && ["daily", "alltime", "achievements", "shapes", "statistics", "history"].includes(savedMenuTab)) {
         currentMenuTab = savedMenuTab;
     }
 
@@ -92,6 +115,32 @@ function draw() {
         text(grid.displayScore, width / 2, 42);
     }
 
+    // Draw achievement notification if active
+    if (achievementNotification !== null) {
+        let elapsed = Date.now() - achievementNotificationTime;
+        if (elapsed < ACHIEVEMENT_NOTIFICATION_DURATION) {
+            // Calculate fade out in last 500ms
+            let alpha = 255;
+            if (elapsed > ACHIEVEMENT_NOTIFICATION_DURATION - 500) {
+                alpha = 255 * (1 - (elapsed - (ACHIEVEMENT_NOTIFICATION_DURATION - 500)) / 500);
+            }
+            
+            // Draw black background
+            fill(0, 0, 0, alpha * 0.8);
+            noStroke();
+            let textWidth = achievementNotification.length * 8; // Approximate width
+            let padding = 8;
+            let boxHeight = 20;
+            rect(width / 2 - textWidth / 2 - padding, S - boxHeight / 2, textWidth + padding * 2, boxHeight, 4);
+            
+            // Draw text
+            fill(255, 215, 0, alpha); // Gold color with fade
+            textSize(14);
+            text(achievementNotification, width / 2, S);
+        } else {
+            achievementNotification = null;
+        }
+    }
     
     // Draw reset button
     stroke(over ? "white" : "black");
@@ -139,8 +188,7 @@ function draw() {
         drawMenuPanel();
     }
 
-    // Stop loop when settled and score display is caught up
-    if (grid.settled && grid.displayScore == grid.score) {
+    if (grid.settled && grid.displayScore == grid.score && achievementNotification === null) {
         noLoop();
     }
     
@@ -165,14 +213,16 @@ function drawMenuPanel() {
     // Draw tabs
     let tabY = 110;
     let tabHeight = 35;
-    let tabWidth = panelWidth / 4;
+    let tabWidth = panelWidth / 6;
     
     // Tab icons and backgrounds
     let tabs = [
         { id: "daily", icon: "📅", title: "Today's Top 10" },
         { id: "alltime", icon: "🌍", title: "All-Time Top 10" },
         { id: "achievements", icon: "⭐", title: "Achievements" },
-        { id: "shapes", icon: "🔷", title: "Shape Tasks" }
+        { id: "shapes", icon: "🔷", title: "Shape Tasks" },
+        { id: "statistics", icon: "📊", title: "Statistics" },
+        { id: "history", icon: "📜", title: "Game History" }
     ];
     
     for (let i = 0; i < tabs.length; i++) {
@@ -211,6 +261,10 @@ function drawMenuPanel() {
     
     if (currentMenuTab === "daily" || currentMenuTab === "alltime") {
         drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight);
+    } else if (currentMenuTab === "statistics") {
+        drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight);
+    } else if (currentMenuTab === "history") {
+        drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight);
     } else {
         drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight);
     }
@@ -258,6 +312,125 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
     textSize(16);
     textAlign(RIGHT, CENTER);
     text("✏️ Edit Name", width - 35, contentStartY + contentHeight - 20);
+    
+    textAlign(CENTER, CENTER);
+}
+
+function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight) {
+    // Calculate total content height
+    let totalHeight = 30 + 35 + 20 + 35 + 35 + 20 + 35 + 20; // Personal best + header + chains row + games played
+    
+    // Clamp scroll position
+    let maxScroll = Math.max(0, totalHeight - contentHeight);
+    menuScrollY = Math.max(0, Math.min(menuScrollY, maxScroll));
+    
+    // Clip to content area
+    push();
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(panelX, contentStartY, panelWidth, contentHeight);
+    drawingContext.clip();
+    
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    
+    let y = contentStartY + 30 - menuScrollY;
+    let lineHeight = 35;
+    
+    // Personal Best Score
+    text("Personal Best:", panelX + 20, y);
+    fill(255, 215, 0);
+    text(statistics.personalBest, panelX + panelWidth - 40, y);
+    y += lineHeight + 20;
+    
+    // Largest Chains header
+    fill(255);
+    textSize(18);
+    text("Largest Chains:", panelX + 20, y);
+    y += lineHeight;
+    
+    // Display all tile types on one row
+    textSize(16);
+    let startX = panelX + 30;
+    let tileSpacing = (panelWidth - 60) / 5; // Divide space evenly
+    
+    for (let tileType = 1; tileType <= 5; tileType++) {
+        let tileX = startX + (tileType - 1) * tileSpacing;
+        
+        // Draw colored box
+        fill(boxColors[tileType]);
+        noStroke();
+        rect(tileX, y - 12, 24, 24);
+        
+        // Draw tile number
+        fill(255, 230);
+        textSize(18);
+        textAlign(CENTER, CENTER);
+        text(tileType, tileX + 12, y);
+        
+        // Draw "x" and chain size
+        textAlign(LEFT, CENTER);
+        fill(255);
+        textSize(16);
+        text("×" + statistics.largestChains[tileType], tileX + 28, y);
+    }
+    
+    y += lineHeight;
+    
+    y += 20;
+    
+    // Total Games Played
+    fill(255);
+    text("Games Played:", panelX + 20, y);
+    fill(255, 215, 0);
+    text(statistics.gamesPlayed, panelX + panelWidth - 40, y);
+    
+    drawingContext.restore();
+    pop();
+    
+    // Draw scroll indicator if needed
+    if (maxScroll > 0) {
+        fill(100);
+        let scrollBarHeight = (contentHeight / totalHeight) * contentHeight;
+        let scrollBarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollBarHeight);
+        rect(panelX + panelWidth - 8, scrollBarY, 4, scrollBarHeight, 2);
+    }
+    
+    textAlign(CENTER, CENTER);
+}
+
+function drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight) {
+    if (gameHistory.length === 0) {
+        textSize(18);
+        fill(200);
+        textAlign(CENTER, CENTER);
+        text("No games played yet.", width / 2, contentStartY + contentHeight / 2);
+        return;
+    }
+    
+    textSize(16);
+    textAlign(LEFT, CENTER);
+    let y = contentStartY + 20;
+    let lineHeight = 30;
+    
+    fill(255);
+    text("Last " + gameHistory.length + " game" + (gameHistory.length === 1 ? "" : "s") + ":", panelX + 20, y);
+    y += lineHeight + 10;
+    
+    for (let i = 0; i < gameHistory.length; i++) {
+        let score = gameHistory[i];
+        
+        // Highlight personal bests in gold
+        if (score === statistics.personalBest && score > 0) {
+            fill(255, 215, 0);
+        } else {
+            fill(255);
+        }
+        
+        text((i + 1) + ". " + score, panelX + 40, y);
+        y += lineHeight;
+    }
     
     textAlign(CENTER, CENTER);
 }
@@ -422,7 +595,7 @@ function onClick() {
     if (mouseY < 80) {
         if (mouseX > width - 80) {
             // Reset button (top right)
-            if (grid.gameOver || grid.moves.length < 10 || confirm("Start a new game?")) {
+            if (grid.gameOver || grid.moves.length === 0 || confirm("Start a new game?")) {
                 newGame();
                 showMenu = false;
                 cachedShapeMatches = null; // Invalidate cache on new game
@@ -453,12 +626,12 @@ function onClick() {
         if (showMenu) {
             // Check if clicking on tabs
             let panelWidth = width - 30;
-            let tabWidth = panelWidth / 4;
+            let tabWidth = panelWidth / 6;
             let tabY = 110;
             let tabHeight = 35;
             
             if (mouseY >= tabY && mouseY <= tabY + tabHeight) {
-                let tabs = ["daily", "alltime", "achievements", "shapes"];
+                let tabs = ["daily", "alltime", "achievements", "shapes", "statistics", "history"];
                 for (let i = 0; i < tabs.length; i++) {
                     let tabX = 15 + i * tabWidth;
                     if (mouseX >= tabX && mouseX < tabX + tabWidth) {
@@ -500,7 +673,7 @@ function onClick() {
             }
             
             // Handle drag scrolling for achievement tabs
-            if (currentMenuTab === "achievements" || currentMenuTab === "shapes") {
+            if (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") {
                 if (mouseY >= 95 && mouseY <= height - 15) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
@@ -519,7 +692,7 @@ function onClick() {
 
 function mouseWheel(event) {
     // Handle scrolling in achievement tabs
-    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes")) {
+    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics")) {
         menuScrollY += event.delta;
         redraw();
         return false; // Prevent default scrolling
@@ -528,7 +701,7 @@ function mouseWheel(event) {
 
 function mouseDragged() {
     // Handle drag scrolling in achievement tabs
-    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes") && menuDragStartY !== null) {
+    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
         let deltaY = menuDragStartY - mouseY;
         menuScrollY = menuDragStartScrollY + deltaY;
         redraw();
@@ -538,7 +711,7 @@ function mouseDragged() {
 
 function touchMoved() {
     // Handle touch scrolling in achievement tabs (for p5.js touch events)
-    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes") && menuDragStartY !== null) {
+    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
         // Use touches array if available, otherwise fall back to mouseY
         let currentY = touches.length > 0 ? touches[0].y : mouseY;
         let deltaY = menuDragStartY - currentY;
@@ -579,6 +752,11 @@ function keyPressed() {
 
     if (key == "u") {
         // undo
+        if (grid.moves.length > 0) {
+            let moves = grid.moves.slice(0, -1); // Remove last move
+            grid = new NumberGrid(w, h, grid.seed, moves);
+            redraw();
+        }
     }
 }
 
@@ -593,8 +771,8 @@ function handleTouchStart(event) {
     let rect = canvas.elt.getBoundingClientRect();
     let touchY = touch.clientY - rect.top;
     
-    // Only handle scrolling for achievement/shapes tabs in the scrollable area
-    if ((currentMenuTab === "achievements" || currentMenuTab === "shapes") && 
+    // Only handle scrolling for achievement/shapes/statistics tabs in the scrollable area
+    if ((currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && 
         touchY >= 95 && touchY <= height - 15) {
         menuDragStartY = touchY;
         menuDragStartScrollY = menuScrollY;
@@ -604,7 +782,7 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
     if (!showMenu) return;
-    if (currentMenuTab !== "achievements" && currentMenuTab !== "shapes") return;
+    if (currentMenuTab !== "achievements" && currentMenuTab !== "shapes" && currentMenuTab !== "statistics") return;
     if (menuDragStartY === null) return;
     
     let touch = event.touches[0];
@@ -682,7 +860,159 @@ function checkForNewVersion() {
             }
         }
     })
-    .catch(error => {
+        .catch(error => {
         console.log('Version check failed:', error);
     });
+}
+
+// ============================================================================
+// Statistics
+// ============================================================================
+
+function initializeStatistics() {
+    // Load saved statistics from localStorage
+    let savedStats = getItem("statistics");
+    
+    if (savedStats !== null) {
+        statistics = savedStats;
+    } else {
+        // First time initialization - try to get personal best from database
+        initializeStatisticsFromDatabase();
+    }
+}
+
+async function initializeStatisticsFromDatabase() {
+    // Try to get the user's all-time high score from Firebase
+    if (currentUser && db) {
+        try {
+            const allTimeRef = db.collection('highscores').doc(currentUser.uid);
+            const allTimeDoc = await allTimeRef.get();
+            
+            if (allTimeDoc.exists) {
+                const dbScore = allTimeDoc.data().score;
+                if (dbScore > statistics.personalBest) {
+                    statistics.personalBest = dbScore;
+                    saveStatistics();
+                    console.log("Initialized personal best from database:", dbScore);
+                }
+            }
+        } catch (error) {
+            console.log("Could not fetch personal best from database:", error);
+        }
+    }
+}
+
+function saveStatistics() {
+    storeItem("statistics", statistics);
+}
+
+function updateStatisticsLive(score, chains) {
+    // Update statistics in real-time during gameplay (doesn't increment games played)
+    // Update personal best
+    if (score > statistics.personalBest) {
+        statistics.personalBest = score;
+        saveStatistics();
+    }
+    
+    // Update largest chains for each tile type
+    if (chains) {
+        let updated = false;
+        for (let tileType in chains) {
+            if (chains[tileType] > statistics.largestChains[tileType]) {
+                statistics.largestChains[tileType] = chains[tileType];
+                updated = true;
+            }
+        }
+        if (updated) {
+            saveStatistics();
+        }
+    }
+}
+
+function updateStatistics(score, chains) {
+    // Update statistics at game end (includes incrementing games played)
+    updateStatisticsLive(score, chains);
+    
+    // Increment games played
+    statistics.gamesPlayed++;
+    
+    saveStatistics();
+}
+
+function resetStatistics() {
+    // Reset all statistics (for debugging)
+    statistics = {
+        personalBest: 0,
+        largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        gamesPlayed: 0
+    };
+    saveStatistics();
+    console.log("All statistics have been reset");
+}
+
+// ============================================================================
+// Game History
+// ============================================================================
+
+function initializeGameHistory() {
+    // Load saved game history from localStorage
+    let savedHistory = getItem("gameHistory");
+    
+    if (savedHistory !== null) {
+        gameHistory = savedHistory;
+    }
+}
+
+function saveGameHistory() {
+    storeItem("gameHistory", gameHistory);
+}
+
+function addToGameHistory(score) {
+    // Add score to beginning of history
+    gameHistory.unshift(score);
+    
+    // Keep only last 10 scores
+    if (gameHistory.length > 10) {
+        gameHistory = gameHistory.slice(0, 10);
+    }
+    
+    saveGameHistory();
+    
+    // Check consecutive score achievements
+    checkConsecutiveScoreAchievements();
+}
+
+function resetGameHistory() {
+    // Reset game history (for debugging)
+    gameHistory = [];
+    saveGameHistory();
+    console.log("Game history has been reset");
+}
+
+function checkConsecutiveScoreAchievements() {
+    // Check if last N games all meet the score threshold
+    
+    // 3000+ in 3 consecutive games
+    if (gameHistory.length >= 3) {
+        let last3 = gameHistory.slice(0, 3);
+        if (last3.every(score => score >= 3000)) {
+            unlockAchievement("consecutive_3000_x3");
+        }
+    }
+    
+    // 5000+ in 5 consecutive games
+    if (gameHistory.length >= 5) {
+        let last5 = gameHistory.slice(0, 5);
+        if (last5.every(score => score >= 5000)) {
+            unlockAchievement("consecutive_5000_x5");
+        }
+    }
+    
+    // 7000+ in 7 consecutive games
+    if (gameHistory.length >= 7) {
+        let last7 = gameHistory.slice(0, 7);
+        if (last7.every(score => score >= 7000)) {
+            unlockAchievement("consecutive_7000_x7");
+        }
+    }
 }
