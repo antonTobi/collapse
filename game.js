@@ -303,7 +303,7 @@ function newGame() {
     // Reload if new version is available
     if (typeof newVersionAvailable !== 'undefined' && newVersionAvailable) {
         console.log('Reloading to new version...');
-        window.location.reload(true);
+        window.location.reload();
         return;
     }
     
