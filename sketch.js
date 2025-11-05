@@ -340,36 +340,38 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     
     // Personal Best Score
     text("Personal Best:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
-    text(statistics.personalBest, panelX + panelWidth - 40, y);
+    text(statistics.personalBest, panelX + panelWidth - 20, y);
     y += lineHeight + 20;
     
     // Largest Chains header
+    textAlign(LEFT, CENTER);
     fill(255);
     textSize(18);
     text("Largest Chains:", panelX + 20, y);
     y += lineHeight;
     
-    // Display all tile types on one row
+    // Display all tile types on one row - centered
     textSize(16);
-    let startX = panelX + 30;
-    let tileSpacing = (panelWidth - 60) / 5; // Divide space evenly
+    let totalTileWidth = 5 * 24 + 4 * 40 + 16; // 5 tiles (24px each) + 4 gaps (40px each for "×" and number)
+    let startX = panelX + (panelWidth - totalTileWidth) / 2; // Center the tiles
     
     for (let tileType = 1; tileType <= 5; tileType++) {
-        let tileX = startX + (tileType - 1) * tileSpacing;
+        let tileX = startX + (tileType - 1) * (24 + 40);
         
         // Draw colored box
         fill(boxColors[tileType]);
         noStroke();
         rect(tileX, y - 12, 24, 24);
         
-        // Draw tile number
+        // Draw tile number (shifted down by 1px)
         fill(255, 230);
         textSize(18);
         textAlign(CENTER, CENTER);
-        text(tileType, tileX + 12, y);
+        text(tileType, tileX + 12, y + 1);
         
-        // Draw "x" and chain size
+        // Draw "×" and chain size
         textAlign(LEFT, CENTER);
         fill(255);
         textSize(16);
@@ -381,10 +383,12 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     y += 20;
     
     // Total Games Played
+    textAlign(LEFT, CENTER);
     fill(255);
     text("Games Played:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
-    text(statistics.gamesPlayed, panelX + panelWidth - 40, y);
+    text(statistics.gamesPlayed, panelX + panelWidth - 20, y);
     
     drawingContext.restore();
     pop();
@@ -406,32 +410,76 @@ function drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight
         fill(200);
         textAlign(CENTER, CENTER);
         text("No games played yet.", width / 2, contentStartY + contentHeight / 2);
+        textAlign(CENTER, CENTER);
         return;
     }
     
-    textSize(16);
-    textAlign(LEFT, CENTER);
-    let y = contentStartY + 20;
-    let lineHeight = 30;
+    // Find max score to determine scale
+    let maxScore = Math.max(...gameHistory);
+    let maxYValue = Math.ceil(maxScore / 1000) * 1000; // Round up to nearest 1000
+    if (maxYValue === 0) maxYValue = 1000; // Minimum scale
     
+    // Graph dimensions (reduced margins since no axis labels)
+    let graphMarginTop = 30;
+    let graphMarginBottom = 20;
+    let graphMarginLeft = 20;
+    let graphMarginRight = 20;
+    let labelSpace = 20; // Space needed for score label above bar (10px font + 10px padding)
+    let graphWidth = panelWidth - graphMarginLeft - graphMarginRight;
+    let graphHeight = contentHeight - graphMarginTop - graphMarginBottom - labelSpace;
+    let graphX = panelX + graphMarginLeft;
+    let graphY = contentStartY + graphMarginTop + labelSpace;
+    
+    // Title
     fill(255);
-    text("Last " + gameHistory.length + " game" + (gameHistory.length === 1 ? "" : "s") + ":", panelX + 20, y);
-    y += lineHeight + 10;
+    textSize(16);
+    textAlign(CENTER, CENTER);
+    text("Last " + gameHistory.length + " Scores", width / 2, contentStartY + 15);
     
+    // Draw Y-axis grid lines (no labels)
+    stroke(60);
+    strokeWeight(1);
+    
+    let numMarks = maxYValue / 1000;
+    for (let i = 0; i <= numMarks; i++) {
+        let y = graphY + graphHeight - (i / numMarks) * graphHeight;
+        // Grid line
+        line(graphX, y, graphX + graphWidth, y);
+    }
+    
+    // Draw bars
+    let barWidth = graphWidth / gameHistory.length;
+    let barPadding = barWidth * 0.2;
+    
+    noStroke();
     for (let i = 0; i < gameHistory.length; i++) {
-        let score = gameHistory[i];
+        let score = gameHistory[gameHistory.length - 1 - i]; // Reverse order (oldest to newest left to right)
+        let barHeight = (score / maxYValue) * graphHeight;
+        let barX = graphX + i * barWidth + barPadding / 2;
+        let barY = graphY + graphHeight - barHeight;
         
-        // Highlight personal bests in gold
+        // Draw bars in white (or gold for personal best)
         if (score === statistics.personalBest && score > 0) {
             fill(255, 215, 0);
         } else {
             fill(255);
         }
         
-        text((i + 1) + ". " + score, panelX + 40, y);
-        y += lineHeight;
+        rect(barX, barY, barWidth - barPadding, barHeight);
+        
+        // Draw score label above bar
+        fill(255);
+        textSize(10);
+        textAlign(CENTER, CENTER);
+        text(score, barX + (barWidth - barPadding) / 2, barY - 10);
     }
     
+    // Draw X-axis
+    stroke(150);
+    strokeWeight(2);
+    line(graphX, graphY + graphHeight, graphX + graphWidth, graphY + graphHeight);
+    
+    noStroke();
     textAlign(CENTER, CENTER);
 }
 
