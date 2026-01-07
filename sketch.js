@@ -303,14 +303,10 @@ function drawMenuPanel() {
 
 function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) {
     let lines = [
-        "How to play:",
-        "",
         "• Click a group of matching boxes to collapse",
         "  them into a single box with a higher value.",
-        "",
         "• Collapsing a group of 5's creates a shape",
         "  tile, which cannot be further collapsed.",
-        "",
         "• The game ends when no more moves are",
         "  possible!",
         "",
