@@ -5,11 +5,13 @@
 let showMoveCount;
 let showSplits;
 let showMenu = false;
-let currentMenuTab = "daily"; // "daily", "alltime", "achievements", "shapes", "statistics", "history"
+let currentMenuTab = "howtoplay"; // "howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"
 let menuScrollY = 0;
 let menuDragStartY = null;
 let menuDragStartScrollY = null;
 let cachedShapeMatches = null; // Cache for shape matching results
+let resetConfirmPending = false; // State for new game confirmation
+let resetConfirmTime = 0; // Timestamp for confirmation timeout
 let currentAppVersion = null; // Track current app version
 let newVersionAvailable = false; // Flag if new version detected
 let canvas; // Canvas reference for event listeners
@@ -60,7 +62,7 @@ function setup() {
     
     // Restore last opened menu tab
     let savedMenuTab = getItem("currentMenuTab");
-    if (savedMenuTab !== null && ["daily", "alltime", "achievements", "shapes", "statistics", "history"].includes(savedMenuTab)) {
+    if (savedMenuTab !== null && ["howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"].includes(savedMenuTab)) {
         currentMenuTab = savedMenuTab;
     }
 
@@ -118,7 +120,7 @@ function draw() {
         text("moves", width/2, 56)
     } else {
         textSize(36)
-        text(grid.displayScore, width / 2, 42);
+        text((showSplits && !over) ? grid.displaySplit : grid.displayScore, width / 2, 42);
     }
 
     // Draw achievement notification if active
@@ -153,8 +155,21 @@ function draw() {
     strokeWeight(2);
     let resetX = width - S / 2;
     let resetY = 42;
-    line(resetX - 10, resetY, resetX + 10, resetY);
-    line(resetX, resetY - 10, resetX, resetY + 10);
+    
+    // Check for reset confirmation timeout
+    if (resetConfirmPending && millis() - resetConfirmTime > 2000) {
+        resetConfirmPending = false;
+    }
+
+    if (resetConfirmPending) {
+        // Draw checkmark
+        line(resetX - 8, resetY, resetX - 2, resetY + 6);
+        line(resetX - 2, resetY + 6, resetX + 10, resetY - 6);
+    } else {
+        // Draw +
+        line(resetX - 10, resetY, resetX + 10, resetY);
+        line(resetX, resetY - 10, resetX, resetY + 10);
+    }
     noStroke();
     fill(over ? "white" : "black");
 
@@ -177,12 +192,12 @@ function draw() {
     //     text("(" + sign + grid.scoreSplitDiff + ")", width / 2, S - 14);
     // }
 
-    if (showSplits) {
-        fill(0)
-        textSize(16)
-        // text("(" + grid.displaySplit + ")", width / 2, S - 13);
-        text(grid.displaySplit, width / 2, S - 12);
-    }
+    // if (showSplits && (grid.displaySplit !== grid.displayScore)) {
+    //     fill(0)
+    //     textSize(16)
+    //     // text("(" + grid.displaySplit + ")", width / 2, S - 13);
+    //     text(grid.displaySplit, width / 2, S - 12);
+    // }
     
     textSize(32);
     // Draw menu toggle button (hamburger icon)
@@ -201,7 +216,7 @@ function draw() {
         drawMenuPanel();
     }
 
-    if (grid.settled && grid.displayScore == grid.score && achievementNotification === null) {
+    if (grid.settled && grid.displayScore == grid.score && achievementNotification === null && !resetConfirmPending) {
         noLoop();
     }
     
@@ -226,10 +241,11 @@ function drawMenuPanel() {
     // Draw tabs
     let tabY = 110;
     let tabHeight = 35;
-    let tabWidth = panelWidth / 6;
+    let tabWidth = panelWidth / 7;
     
     // Tab icons and backgrounds
     let tabs = [
+        { id: "howtoplay", icon: "❓", title: "How to Play" },
         { id: "daily", icon: "📅", title: "Today's Top 10" },
         { id: "alltime", icon: "🌍", title: "All-Time Top 10" },
         { id: "achievements", icon: "⭐", title: "Achievements" },
@@ -272,7 +288,9 @@ function drawMenuPanel() {
     let contentStartY = tabY + tabHeight + 35;
     let contentHeight = panelHeight - (contentStartY - panelY);
     
-    if (currentMenuTab === "daily" || currentMenuTab === "alltime") {
+    if (currentMenuTab === "howtoplay") {
+        drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight);
+    } else if (currentMenuTab === "daily" || currentMenuTab === "alltime") {
         drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight);
     } else if (currentMenuTab === "statistics") {
         drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight);
@@ -281,6 +299,62 @@ function drawMenuPanel() {
     } else {
         drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight);
     }
+}
+
+function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) {
+    let lines = [
+        "How to play:",
+        "",
+        "• Click a group of matching boxes to collapse",
+        "  them into a single box with a higher value.",
+        "",
+        "• Collapsing a group of 5's creates a shape",
+        "  tile, which cannot be further collapsed.",
+        "",
+        "• The game ends when no more moves are",
+        "  possible!",
+        "",
+        "• Click a shape tile or the score display to",
+        "  toggle between shapes and score splits.",
+    ];
+
+    // Calculate total height
+    let totalHeight = lines.length * 28 + 20;
+    
+    // Clamp scroll position
+    let maxScroll = Math.max(0, totalHeight - contentHeight);
+    menuScrollY = Math.max(0, Math.min(menuScrollY, maxScroll));
+    
+    // Clip to content area
+    push();
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(panelX, contentStartY, panelWidth, contentHeight);
+    drawingContext.clip();
+    
+    textAlign(LEFT, TOP);
+    fill(255);
+    textSize(width < 400 ? 15 : 16);
+    
+    let y = contentStartY + 10 - menuScrollY;
+    fill(255);
+    for (let line of lines) {
+        text(line, panelX + 20, y);
+        y += 28;
+    }
+    
+    drawingContext.restore();
+    pop();
+    
+    // Draw scroll indicator if needed
+    if (maxScroll > 0) {
+        fill(100);
+        let scrollBarHeight = (contentHeight / totalHeight) * contentHeight;
+        let scrollBarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollBarHeight);
+        rect(panelX + panelWidth - 8, scrollBarY, 4, scrollBarHeight, 2);
+    }
+    
+    textAlign(CENTER, CENTER);
 }
 
 function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight) {
@@ -656,13 +730,19 @@ function onClick() {
     if (mouseY < 80) {
         if (mouseX > width - 80) {
             // Reset button (top right)
-            if (grid.gameOver || grid.moves.length === 0 || confirm("Start a new game?")) {
+            if (grid.gameOver || grid.scoreSplits.length === 0 || resetConfirmPending) {
                 newGame();
                 showMenu = false;
-                cachedShapeMatches = null; // Invalidate cache on new game
+                cachedShapeMatches = null;
+                resetConfirmPending = false;
+                loop();
+            } else {
+                resetConfirmPending = true;
+                resetConfirmTime = millis();
                 loop();
             }
         } else if (mouseX < 80) {
+            resetConfirmPending = false;
             // Menu toggle button (top left)
             showMenu = !showMenu;
             
@@ -680,21 +760,23 @@ function onClick() {
             
             loop();
         } else {
+            resetConfirmPending = false;
             showSplits = !showSplits;
             storeItem("showSplits", showSplits);
             // showMoveCount = !showMoveCount;
             // storeItem("showMoveCount", showMoveCount);
         }
     } else {
+        resetConfirmPending = false;
         if (showMenu) {
             // Check if clicking on tabs
             let panelWidth = width - 30;
-            let tabWidth = panelWidth / 6;
+            let tabWidth = panelWidth / 7;
             let tabY = 110;
             let tabHeight = 35;
             
             if (mouseY >= tabY && mouseY <= tabY + tabHeight) {
-                let tabs = ["daily", "alltime", "achievements", "shapes", "statistics", "history"];
+                let tabs = ["howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"];
                 for (let i = 0; i < tabs.length; i++) {
                     let tabX = 15 + i * tabWidth;
                     if (mouseX >= tabX && mouseX < tabX + tabWidth) {
@@ -736,7 +818,7 @@ function onClick() {
             }
             
             // Handle drag scrolling for achievement tabs
-            if (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") {
+            if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") {
                 if (mouseY >= 95 && mouseY <= height - 15) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
@@ -755,7 +837,7 @@ function onClick() {
 
 function mouseWheel(event) {
     // Handle scrolling in achievement tabs
-    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics")) {
+    if (showMenu && (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics")) {
         menuScrollY += event.delta;
         redraw();
         return false; // Prevent default scrolling
@@ -764,7 +846,7 @@ function mouseWheel(event) {
 
 function mouseDragged() {
     // Handle drag scrolling in achievement tabs
-    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
+    if (showMenu && (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
         let deltaY = menuDragStartY - mouseY;
         menuScrollY = menuDragStartScrollY + deltaY;
         redraw();
@@ -774,7 +856,7 @@ function mouseDragged() {
 
 function touchMoved() {
     // Handle touch scrolling in achievement tabs (for p5.js touch events)
-    if (showMenu && (currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
+    if (showMenu && (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
         // Use touches array if available, otherwise fall back to mouseY
         let currentY = touches.length > 0 ? touches[0].y : mouseY;
         let deltaY = menuDragStartY - currentY;
@@ -835,7 +917,7 @@ function handleTouchStart(event) {
     let touchY = touch.clientY - rect.top;
     
     // Only handle scrolling for achievement/shapes/statistics tabs in the scrollable area
-    if ((currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && 
+    if ((currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && 
         touchY >= 95 && touchY <= height - 15) {
         menuDragStartY = touchY;
         menuDragStartScrollY = menuScrollY;
@@ -845,7 +927,7 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
     if (!showMenu) return;
-    if (currentMenuTab !== "achievements" && currentMenuTab !== "shapes" && currentMenuTab !== "statistics") return;
+    if (currentMenuTab !== "howtoplay" && currentMenuTab !== "achievements" && currentMenuTab !== "shapes" && currentMenuTab !== "statistics") return;
     if (menuDragStartY === null) return;
     
     let touch = event.touches[0];

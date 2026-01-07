@@ -5,31 +5,24 @@
 // Achievement definitions
 const ACHIEVEMENTS = [
 
+    // New achievements:
     {
-        id: "single_move_51",
-        description: "Gain exactly 51 points with one move",
-        type: "score"
+        id: "split_1000_once",
+        description: "Make a tile with a value of 1000+ points",
+        type: "split"
     },
     {
-        id: "shape_on_move_6",
-        description: "Create a shape tile on the 6th move",
-        type: "special"
+        id: "split_100_exactly_three",
+        description: "Make 3 tiles with a value of exactly 100 points",
+        type: "split"
     },
     {
-        id: "score_1000_no_shapes",
-        description: "Score 1000+ points without any shape tiles",
-        type: "special"
+        id: "split_1000_five",
+        description: "Make 5 tiles with a value of 1000+ points",
+        type: "split"
     },
-    {
-        id: "single_move_100",
-        description: "Gain exactly 100 points with one move",
-        type: "score"
-    },
-    {
-        id: "score_5000",
-        description: "Score 5000+ points",
-        type: "score"
-    },
+
+    // but keep these ones:
     {
         id: "consecutive_3000_x3",
         description: "Score 3000+ points in 3 consecutive games",
@@ -259,6 +252,7 @@ function checkAchievements(eventType, data) {
             checkScoreAchievements(data);
             checkShapeAchievements();
             checkSpecialAchievements();
+            checkSplitAchievements();
             break;
         case "move_made":
             checkScoreAchievements(data);
@@ -267,23 +261,43 @@ function checkAchievements(eventType, data) {
         case "shape_created":
             checkShapeAchievements();
             checkSpecialAchievements();
+            checkSplitAchievements();
             break;
     }
 }
 
-function checkScoreAchievements(data) {
-    // Check score-based achievements
-    if (data.score >= 5000) {
-        unlockAchievement("score_5000");
-    }
-    
-    if (data.scoreGain == 100) {
-        unlockAchievement("single_move_100");
+// Check for split-based achievements (tile values on 6-tiles)
+function checkSplitAchievements() {
+    if (!grid || !grid.polyominoList) return;
+    // Gather all split values for 6-tiles
+    let splits = [];
+    for (let i = 0; i < grid.w; i++) {
+        for (let j = 0; j < grid.h; j++) {
+            let box = grid[i][j];
+            if (box.n === 6 && typeof box.split === "number") {
+                splits.push(box.split);
+            }
+        }
     }
 
-    if (data.scoreGain == 51) {
-        unlockAchievement("single_move_51");
+    // 1. Make a tile with a value of 1000+ points
+    if (splits.some(v => v >= 1000)) {
+        unlockAchievement("split_1000_once");
     }
+
+    // 2. Make three tiles with a value of exactly 100 points
+    if (splits.filter(v => v === 100).length >= 3) {
+        unlockAchievement("split_100_exactly_three");
+    }
+
+    // 3. Make five tiles with a value of 1000+ points
+    if (splits.filter(v => v >= 1000).length >= 5) {
+        unlockAchievement("split_1000_five");
+    }
+}
+
+function checkScoreAchievements(data) {
+    // Check score-based achievements (none for removed achievements)
 }
 
 function checkShapeAchievements() {
@@ -319,13 +333,5 @@ function checkSpecialAchievements() {
     // Check special condition achievements
     if (!grid) return;
     
-    // Shape on 6th move
-    if (grid.moves.length === 6 && grid.polyominoList.length > 0) {
-        unlockAchievement("shape_on_move_6");
-    }
-    
-    // Score 1000+ without any shapes
-    if (grid.score >= 1000 && grid.polyominoList.length === 0) {
-        unlockAchievement("score_1000_no_shapes");
-    }
+    // No special achievements for removed ones
 }

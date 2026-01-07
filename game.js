@@ -219,6 +219,13 @@ class NumberGrid {
 
         if (n + 1 == 6) {
             this.polyominoList.push(coords);
+            this.scoreSplits.push(this.score);
+            if (splits.length) {
+                this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
+            }
+            box.shape = coords;
+            box.split = this.split
+            box.showShape = true;
             // Check shape achievements whenever a new shape is created (only during live gameplay)
             if (!this.isReplaying) {
                 checkAchievements("shape_created", {});
@@ -227,13 +234,6 @@ class NumberGrid {
                     cachedShapeMatches = null;
                 }
             }
-            this.scoreSplits.push(this.score);
-            if (splits.length) {
-                this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
-            }
-            box.shape = coords;
-            box.split = this.split
-            box.showShape = true;
             // for (let i = 0; i < this.w; i ++) {
             //     for (let j = 0; j < this.h; j ++) {
             //         if (this[i][j].showShape) {
