@@ -3,6 +3,7 @@
 // ============================================================================
 
 let showMoveCount;
+let showSplits;
 let showMenu = false;
 let currentMenuTab = "daily"; // "daily", "alltime", "achievements", "shapes", "statistics", "history"
 let menuScrollY = 0;
@@ -75,6 +76,11 @@ function setup() {
     showMoveCount = getItem("showMoveCount")
     if (showMoveCount === null) {
         showMoveCount = false
+    }
+
+    showSplits = getItem("showSplits")
+    if (showSplits === null) {
+        showSplits = false
     }
     
     // Start version checking
@@ -170,6 +176,13 @@ function draw() {
     //     textSize(16);
     //     text("(" + sign + grid.scoreSplitDiff + ")", width / 2, S - 14);
     // }
+
+    if (showSplits) {
+        fill(0)
+        textSize(16)
+        // text("(" + grid.displaySplit + ")", width / 2, S - 13);
+        text(grid.displaySplit, width / 2, S - 12);
+    }
     
     textSize(32);
     // Draw menu toggle button (hamburger icon)
@@ -667,8 +680,10 @@ function onClick() {
             
             loop();
         } else {
-            showMoveCount = !showMoveCount;
-            storeItem("showMoveCount", showMoveCount);
+            showSplits = !showSplits;
+            storeItem("showSplits", showSplits);
+            // showMoveCount = !showMoveCount;
+            // storeItem("showMoveCount", showMoveCount);
         }
     } else {
         if (showMenu) {

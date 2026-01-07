@@ -21,7 +21,14 @@ class Box {
             noStroke();
             text(this.n, x, y + 0.05 * S);
         } else {
-            drawShape(this.shape, x, y, 12, 200);
+            if (showSplits) {
+                fill(200)
+                textSize(20)
+                text(this.split, x, y + 0.03 * S)
+            } else {
+                drawShape(this.shape, x, y, 12, 200);
+            }
+            
         }
     }
 }
@@ -83,6 +90,14 @@ class NumberGrid {
         }
         this.gameOver = this.noLegalMoves();
         this.displayScore = this.score;
+    }
+
+    get split() {
+        return this.score - (this.scoreSplits[this.scoreSplits.length - 2] || 0)
+    }
+
+    get displaySplit() {
+        return max(0, this.displayScore - (this.scoreSplits[this.scoreSplits.length - 1] || 0))
     }
 
     draw() {
@@ -167,7 +182,8 @@ class NumberGrid {
         let box = this[i][j]
         let n = box.n;
         if (n > 5) {
-            box.showShape = !(box.showShape)
+            showSplits = !showSplits;
+            storeItem("showSplits", showSplits);
             return 0;
         }
 
@@ -216,6 +232,7 @@ class NumberGrid {
                 this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
             }
             box.shape = coords;
+            box.split = this.split
             box.showShape = true;
             // for (let i = 0; i < this.w; i ++) {
             //     for (let j = 0; j < this.h; j ++) {
