@@ -131,15 +131,16 @@ function draw() {
             // Draw black background
             fill(0, 0, 0, alpha * 0.8);
             noStroke();
+            let notificationY = 66; // Same Y as score split / game over message
             let textWidth = achievementNotification.length * 8; // Approximate width
             let padding = 8;
             let boxHeight = 20;
-            rect(width / 2 - textWidth / 2 - padding, S - boxHeight / 2, textWidth + padding * 2, boxHeight, 4);
+            rect(width / 2 - textWidth / 2 - padding, notificationY - boxHeight / 2, textWidth + padding * 2, boxHeight, 4);
 
             // Draw text
             fill(255, 215, 0, alpha); // Gold color with fade
             textSize(14);
-            text(achievementNotification, width / 2, S);
+            text(achievementNotification, width / 2, notificationY);
         } else {
             achievementNotification = null;
         }
@@ -1132,6 +1133,14 @@ function resetGameHistory() {
     gameHistory = [];
     saveGameHistory();
     console.log("Game history has been reset");
+}
+
+function debugTestNotification(message = "Test Achievement Unlocked!") {
+    // Debug function to test achievement notification display
+    achievementNotification = message;
+    achievementNotificationTime = Date.now();
+    loop();
+    console.log("Test notification triggered:", message);
 }
 
 function checkConsecutiveScoreAchievements() {
