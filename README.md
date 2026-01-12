@@ -1,3 +1,3 @@
 # Collapse
 
-A game about collapsing groups of numbered boxes.
+A game about collapsing groups of numbered tiles.

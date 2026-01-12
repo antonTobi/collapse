@@ -4,8 +4,6 @@
 
 // Achievement definitions
 const ACHIEVEMENTS = [
-
-    // New achievements:
     {
         id: "split_1000_once",
         description: "Make a tile with a value of 1000+ points",
@@ -21,8 +19,11 @@ const ACHIEVEMENTS = [
         description: "Make 5 tiles with a value of 1000+ points",
         type: "split"
     },
-
-    // but keep these ones:
+    {
+        id: "split_10_exactly_seven",
+        description: "Make 7 tiles with a value of exactly 10 points",
+        type: "split"
+    },
     {
         id: "consecutive_3000_x3",
         description: "Score 3000+ points in 3 consecutive games",
@@ -290,7 +291,12 @@ function checkSplitAchievements() {
         unlockAchievement("split_100_exactly_three");
     }
 
-    // 3. Make five tiles with a value of 1000+ points
+    // 3. Make seven tiles with a value of exactly 10 points
+    if (splits.filter(v => v === 10).length >= 7) {
+        unlockAchievement("split_10_exactly_seven");
+    }
+
+    // 4. Make five tiles with a value of 1000+ points
     if (splits.filter(v => v >= 1000).length >= 5) {
         unlockAchievement("split_1000_five");
     }

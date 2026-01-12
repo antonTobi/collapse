@@ -21,14 +21,12 @@ class Box {
             noStroke();
             text(this.n, x, y + 0.05 * S);
         } else {
-            if (showSplits) {
-                fill(200)
-                textSize(20)
-                text(this.split, x, y + 0.03 * S)
-            } else {
-                drawShape(this.shape, x, y, 12, 200);
-            }
-            
+            // Draw shape slightly smaller and moved up
+            drawShape(this.shape, x, y - 9, 9, 200);
+            // Draw split score underneath
+            fill(200);
+            textSize(15);
+            text(this.split, x, y + 26);
         }
     }
 }
@@ -182,8 +180,7 @@ class NumberGrid {
         let box = this[i][j]
         let n = box.n;
         if (n > 5) {
-            showSplits = !showSplits;
-            storeItem("showSplits", showSplits);
+            // 6-tiles cannot be clicked/collapsed
             return 0;
         }
 
