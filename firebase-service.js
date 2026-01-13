@@ -14,6 +14,14 @@ let showLeaderboard = false;
 let showAllTime = false;
 let isLoadingScores = false;
 
+// Global Statistics State
+let globalStats = {
+    gamesToday: 0,
+    activeUsersToday: 0,
+    allTimeGames: 0,
+    isLoading: false
+};
+
 // Daily Splits State
 let splits = [];
 let dailyBestScore = 0;
@@ -261,6 +269,72 @@ async function fetchTopScores(fetchAllTime = showAllTime) {
 function validateScore(seed, moves, score) {
     let g = new NumberGrid(5, 5, seed, moves);
     return (g.score === score);
+}
+
+// ============================================================================
+// Global Statistics
+// ============================================================================
+
+async function incrementGlobalStats() {
+    if (!currentUser || !db) return;
+
+    try {
+        const today = getTodayDateString();
+        const batch = db.batch();
+
+        // Increment daily stats
+        const dailyStatsRef = db.collection('dailystats').doc(today);
+        batch.set(dailyStatsRef, {
+            gamesPlayed: firebase.firestore.FieldValue.increment(1),
+            activeUserIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+            date: today
+        }, { merge: true });
+
+        // Increment all-time stats
+        const allTimeStatsRef = db.collection('globalstats').doc('totals');
+        batch.set(allTimeStatsRef, {
+            totalGamesPlayed: firebase.firestore.FieldValue.increment(1)
+        }, { merge: true });
+
+        await batch.commit();
+        console.log("Global stats incremented");
+    } catch (error) {
+        console.error("Error incrementing global stats:", error);
+    }
+}
+
+async function fetchGlobalStats() {
+    if (!db) return;
+
+    globalStats.isLoading = true;
+    try {
+        const today = getTodayDateString();
+
+        // Fetch daily stats
+        const dailyStatsDoc = await db.collection('dailystats').doc(today).get();
+        if (dailyStatsDoc.exists) {
+            const data = dailyStatsDoc.data();
+            globalStats.gamesToday = data.gamesPlayed || 0;
+            globalStats.activeUsersToday = data.activeUserIds ? data.activeUserIds.length : 0;
+        } else {
+            globalStats.gamesToday = 0;
+            globalStats.activeUsersToday = 0;
+        }
+
+        // Fetch all-time stats
+        const allTimeStatsDoc = await db.collection('globalstats').doc('totals').get();
+        if (allTimeStatsDoc.exists) {
+            globalStats.allTimeGames = allTimeStatsDoc.data().totalGamesPlayed || 0;
+        } else {
+            globalStats.allTimeGames = 0;
+        }
+
+        globalStats.isLoading = false;
+        console.log("Global stats fetched:", globalStats);
+    } catch (error) {
+        console.error("Error fetching global stats:", error);
+        globalStats.isLoading = false;
+    }
 }
 
 // ============================================================================

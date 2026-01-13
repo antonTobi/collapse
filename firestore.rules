@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Scores collection rules (full history)
+    match /scores/{scoreId} {
+      allow create: if request.auth != null 
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.score is number;
+      allow read: if true; // Anyone can read scores for leaderboard
+    }
+    
+    // All-time high scores collection rules
+    match /highscores/{userId} {
+      allow read: if true; // Anyone can read for leaderboard
+      allow write: if request.auth != null 
+                   && request.auth.uid == userId
+                   && request.resource.data.userId == request.auth.uid
+                   && request.resource.data.score is number
+                   && request.resource.data.displayName is string;
+    }
+    
+    // Daily high scores collection rules (with subcollections by date)
+    match /dailyhighscores/{date}/scores/{userId} {
+      allow read: if true; // Anyone can read for leaderboard
+      allow write: if request.auth != null 
+                   && request.auth.uid == userId
+                   && request.resource.data.userId == request.auth.uid
+                   && request.resource.data.score is number
+                   && request.resource.data.displayName is string;
+    }
+    
+    // Users collection rules
+    match /users/{userId} {
+      allow read: if true; // Anyone can read display names for leaderboard
+      allow create, update: if request.auth != null && request.auth.uid == userId; // Users can only edit their own name
+    }
+    
+    // Daily statistics collection rules
+    match /dailystats/{date} {
+      allow read: if true; // Anyone can read global stats
+      allow write: if request.auth != null; // Any authenticated user can increment stats
+    }
+    
+    // Global statistics collection rules
+    match /globalstats/{docId} {
+      allow read: if true; // Anyone can read global stats
+      allow write: if request.auth != null; // Any authenticated user can increment stats
+    }
+  }
+}

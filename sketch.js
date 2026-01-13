@@ -25,6 +25,7 @@ const ACHIEVEMENT_NOTIFICATION_DURATION = 4000; // 4 seconds
 // Statistics
 let statistics = {
     personalBest: 0,
+    personalWorst: null, // null means no completed games yet
     largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     gamesPlayed: 0
 };
@@ -40,6 +41,9 @@ function setup() {
     canvas.elt.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.elt.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.elt.addEventListener('touchend', handleTouchEnd, { passive: false });
+
+    // Close menu when clicking outside the canvas
+    document.addEventListener('click', handleDocumentClick);
 
     textAlign(CENTER, CENTER);
     strokeWeight(2);
@@ -394,7 +398,7 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
 
 function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight) {
     // Calculate total content height
-    let totalHeight = 30 + 35 + 20 + 35 + 35 + 20 + 35 + 20; // Personal best + header + chains row + games played
+    let totalHeight = 30 + 35 + 35 + 20 + 35 + 35 + 20 + 35 + 40 + 35 + 35 + 35 + 20; // Personal stats + chains + games + global stats
 
     // Clamp scroll position
     let maxScroll = Math.max(0, totalHeight - contentHeight);
@@ -414,11 +418,20 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     let y = contentStartY + 30 - menuScrollY;
     let lineHeight = 35;
 
-    // Personal Best Score
-    text("Personal Best:", panelX + 20, y);
+    // Personal Highest Score
+    text("Highest score:", panelX + 20, y);
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
     text(statistics.personalBest, panelX + panelWidth - 20, y);
+    y += lineHeight;
+
+    // Personal Lowest Score
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Lowest score:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(statistics.personalWorst != null ? statistics.personalWorst : "-", panelX + panelWidth - 20, y);
     y += lineHeight + 20;
 
     // Largest Chains header
@@ -465,6 +478,43 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
     text(statistics.gamesPlayed, panelX + panelWidth - 20, y);
+
+    y += lineHeight + 20;
+
+    // Global Statistics header
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(18);
+    text("Global Statistics:", panelX + 20, y);
+    y += lineHeight;
+
+    textSize(16);
+
+    // Games Played Today (Global)
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Games today:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(globalStats.isLoading ? "..." : globalStats.gamesToday, panelX + panelWidth - 20, y);
+    y += lineHeight;
+
+    // Active Users Today
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Players today:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(globalStats.isLoading ? "..." : globalStats.activeUsersToday, panelX + panelWidth - 20, y);
+    y += lineHeight;
+
+    // All-Time Games Played
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("All-time games:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(globalStats.isLoading ? "..." : globalStats.allTimeGames, panelX + panelWidth - 20, y);
 
     drawingContext.restore();
     pop();
@@ -715,8 +765,38 @@ function calculateShapeMatches() {
 // Event Handlers
 // ============================================================================
 
+// Helper function to check if a point is inside the menu panel
+function isInsideMenuPanel(x, y) {
+    let panelX = 15;
+    let panelY = 95;
+    let panelWidth = width - 30;
+    let panelHeight = height - 110;
+    return x >= panelX && x <= panelX + panelWidth &&
+           y >= panelY && y <= panelY + panelHeight;
+}
+
+// Handle clicks outside the canvas to close menu
+function handleDocumentClick(event) {
+    if (!showMenu) return;
+    
+    // Check if click was inside the canvas
+    let rect = canvas.elt.getBoundingClientRect();
+    let clickX = event.clientX;
+    let clickY = event.clientY;
+    
+    let insideCanvas = clickX >= rect.left && clickX <= rect.right &&
+                       clickY >= rect.top && clickY <= rect.bottom;
+    
+    // If click was outside canvas, close menu
+    if (!insideCanvas) {
+        showMenu = false;
+        redraw();
+    }
+}
+
 function onClick() {
     if (mouseY < 80) {
+        // Header area - always accessible
         if (mouseX > width - 80) {
             // Reset button (top right)
             if (grid.gameOver || grid.scoreSplits.length === 0 || resetConfirmPending) {
@@ -752,77 +832,102 @@ function onClick() {
                 initializeGameHistory();
             }
 
+            // Fetch global stats when opening menu on statistics tab
+            if (showMenu && currentMenuTab === "statistics") {
+                fetchGlobalStats().then(() => {
+                    loop();
+                });
+            }
+
             loop();
         } else {
             resetConfirmPending = false;
+            // Click in header area between buttons - outside menu panel, close menu
+            if (showMenu) {
+                showMenu = false;
+            }
         }
     } else {
         resetConfirmPending = false;
         if (showMenu) {
-            // Check if clicking on tabs
-            let panelWidth = width - 30;
-            let tabWidth = panelWidth / 7;
-            let tabY = 110;
-            let tabHeight = 35;
+            // Check if click is inside the menu panel
+            if (isInsideMenuPanel(mouseX, mouseY)) {
+                // Click is inside menu panel - handle interactive elements
+                
+                // Check if clicking on tabs
+                let panelWidth = width - 30;
+                let tabWidth = panelWidth / 7;
+                let tabY = 110;
+                let tabHeight = 35;
 
-            if (mouseY >= tabY && mouseY <= tabY + tabHeight) {
-                let tabs = ["howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"];
-                for (let i = 0; i < tabs.length; i++) {
-                    let tabX = 15 + i * tabWidth;
-                    if (mouseX >= tabX && mouseX < tabX + tabWidth) {
-                        if (currentMenuTab !== tabs[i]) {
-                            currentMenuTab = tabs[i];
-                            storeItem("currentMenuTab", currentMenuTab);
-                            menuScrollY = 0;
+                if (mouseY >= tabY && mouseY <= tabY + tabHeight) {
+                    let tabs = ["howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"];
+                    for (let i = 0; i < tabs.length; i++) {
+                        let tabX = 15 + i * tabWidth;
+                        if (mouseX >= tabX && mouseX < tabX + tabWidth) {
+                            if (currentMenuTab !== tabs[i]) {
+                                currentMenuTab = tabs[i];
+                                storeItem("currentMenuTab", currentMenuTab);
+                                menuScrollY = 0;
 
-                            // Fetch scores when switching to leaderboard tab
-                            if (tabs[i] === "daily" || tabs[i] === "alltime") {
-                                fetchTopScores(tabs[i] === "alltime").then(() => {
-                                    loop();
-                                });
+                                // Fetch scores when switching to leaderboard tab
+                                if (tabs[i] === "daily" || tabs[i] === "alltime") {
+                                    fetchTopScores(tabs[i] === "alltime").then(() => {
+                                        loop();
+                                    });
+                                }
+
+                                // Calculate shape matches when switching to shapes tab
+                                if (tabs[i] === "shapes") {
+                                    calculateShapeMatches();
+                                }
+
+                                // Refresh game history when switching to history tab
+                                if (tabs[i] === "history") {
+                                    initializeGameHistory();
+                                }
+
+                                // Fetch global stats when switching to statistics tab
+                                if (tabs[i] === "statistics") {
+                                    fetchGlobalStats().then(() => {
+                                        loop();
+                                    });
+                                }
+
+                                loop();
                             }
-
-                            // Calculate shape matches when switching to shapes tab
-                            if (tabs[i] === "shapes") {
-                                calculateShapeMatches();
-                            }
-
-                            // Refresh game history when switching to history tab
-                            if (tabs[i] === "history") {
-                                initializeGameHistory();
-                            }
-
-                            loop();
+                            redraw();
+                            return;
                         }
+                    }
+                }
+
+                // Check if clicking edit name button on leaderboard
+                if ((currentMenuTab === "daily" || currentMenuTab === "alltime")) {
+                    let contentStartY = 110 + 35 + 35; // tabY + tabHeight + title
+                    let contentHeight = (height - 110) - (contentStartY - 95);
+                    let editButtonY = contentStartY + contentHeight - 20;
+
+                    if (mouseY >= editButtonY - 10 && mouseY <= editButtonY + 10 &&
+                        mouseX >= width - 120) {
+                        promptForDisplayName();
                         return;
                     }
                 }
-            }
 
-            // Check if clicking edit name button on leaderboard
-            if ((currentMenuTab === "daily" || currentMenuTab === "alltime")) {
-                let contentStartY = 110 + 35 + 35; // tabY + tabHeight + title
-                let contentHeight = (height - 110) - (contentStartY - 95);
-                let editButtonY = contentStartY + contentHeight - 20;
-
-                if (mouseY >= editButtonY - 10 && mouseY <= editButtonY + 10 &&
-                    mouseX >= width - 120) {
-                    promptForDisplayName();
-                    return;
-                }
-            }
-
-            // Handle drag scrolling for achievement tabs
-            if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") {
-                if (mouseY >= 95 && mouseY <= height - 15) {
+                // Handle drag scrolling for scrollable tabs
+                if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
-                    return;
                 }
+                
+                // Click inside menu panel on non-interactive area - do nothing (don't close)
+                redraw();
+                return;
+            } else {
+                // Click is outside menu panel - close menu
+                showMenu = false;
             }
-
-            // Click elsewhere closes menu
-            showMenu = false;
         } else {
             grid.click(mouseX, mouseY);
         }
@@ -864,15 +969,8 @@ function touchMoved() {
 function mouseReleased() {
     // End drag scrolling
     if (menuDragStartY !== null) {
-        let dragDistance = Math.abs(mouseY - menuDragStartY);
         menuDragStartY = null;
         menuDragStartScrollY = null;
-
-        // If it was just a click (not a drag), close the menu
-        if (showMenu && dragDistance < 5 && mouseY >= 95 && mouseY <= height - 15) {
-            showMenu = false;
-            redraw();
-        }
     }
 }
 
@@ -1077,12 +1175,26 @@ function updateStatistics(score, chains) {
     statistics.gamesPlayed++;
 
     saveStatistics();
+
+    // Increment global stats in Firebase
+    if (typeof incrementGlobalStats === 'function') {
+        incrementGlobalStats();
+    }
+}
+
+function updatePersonalWorst(score) {
+    // Update personal worst (only for games that ran out of moves)
+    if (statistics.personalWorst == null || score < statistics.personalWorst) {
+        statistics.personalWorst = score;
+        saveStatistics();
+    }
 }
 
 function resetStatistics() {
     // Reset all statistics (for debugging)
     statistics = {
         personalBest: 0,
+        personalWorst: null,
         largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
         gamesPlayed: 0
     };

@@ -40,6 +40,13 @@ const ACHIEVEMENTS = [
         type: "consecutive"
     },
     {
+        id: "no_shapes_game",
+        description: "Lose a game without any shape tiles",
+        type: "special"
+    },
+
+
+    {
         id: "tetrominoes",
         description: "Tetrominoes",
         type: "shapes",
@@ -339,5 +346,8 @@ function checkSpecialAchievements() {
     // Check special condition achievements
     if (!grid) return;
     
-    // No special achievements for removed ones
+    // Check for game over without any shape tiles
+    if (grid.gameOver && grid.scoreSplits.length === 0) {
+        unlockAchievement("no_shapes_game");
+    }
 }

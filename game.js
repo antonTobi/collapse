@@ -166,6 +166,8 @@ class NumberGrid {
                     checkAchievements("game_over", { score: this.score });
                     // Update statistics
                     updateStatistics(this.score, this.largestChains);
+                    // Update personal worst (only for natural game over)
+                    updatePersonalWorst(this.score);
                     // Add to game history
                     addToGameHistory(this.score);
                 }
