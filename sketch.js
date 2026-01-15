@@ -935,7 +935,13 @@ async function shareScore() {
                     achievementNotification = "Image copied to clipboard!";
                     achievementNotificationTime = Date.now();
                 } else {
-                    // Fallback: download the image
+                    // No clipboard support, download the image
+                    throw new Error("Clipboard API not supported");
+                }
+            } catch (err) {
+                console.error('Failed to copy image:', err);
+                // Fallback to download on error
+                try {
                     let url = URL.createObjectURL(blob);
                     let a = document.createElement('a');
                     a.href = url;
@@ -945,11 +951,10 @@ async function shareScore() {
                     
                     achievementNotification = "Score image downloaded!";
                     achievementNotificationTime = Date.now();
+                } catch (downloadErr) {
+                    achievementNotification = "Failed to download image";
+                    achievementNotificationTime = Date.now();
                 }
-            } catch (err) {
-                console.error('Failed to copy image:', err);
-                achievementNotification = "Failed to copy image";
-                achievementNotificationTime = Date.now();
             }
             
             // Clean up the off-screen buffer
@@ -961,7 +966,7 @@ async function shareScore() {
         
     } catch (err) {
         console.error('Failed to generate share image:', err);
-        achievementNotification = "Failed to share score";
+        achievementNotification = "Failed to generate image";
         achievementNotificationTime = Date.now();
         loop();
     }
