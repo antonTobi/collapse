@@ -925,20 +925,65 @@ async function shareScore() {
         
         // Convert to blob
         canvasElement.toBlob(async (blob) => {
+            // Helper function to download the image
+            const downloadImage = () => {
+                let url = URL.createObjectURL(blob);
+                let a = document.createElement('a');
+                a.href = url;
+                a.download = 'collapse-score-' + grid.score + '.png';
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                achievementNotification = "Downloading image!";
+                achievementNotificationTime = Date.now();
+            };
+            
             try {
                 // Create a File object from the blob for Web Share API
                 const file = new File([blob], 'collapse-score-' + grid.score + '.png', { type: 'image/png' });
                 
-                // Try Web Share API first (native share dialog)
-                if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                    await navigator.share({
-                        files: [file],
-                        title: 'Collapse Score: ' + grid.score,
-                        text: 'I scored ' + grid.score + ' in Collapse!'
-                    });
-                    
-                    achievementNotification = "Shared!";
-                    achievementNotificationTime = Date.now();
+                // Debug logging
+                console.log('Share API available:', !!navigator.share);
+                console.log('canShare available:', !!navigator.canShare);
+                if (navigator.canShare) {
+                    console.log('canShare files:', navigator.canShare({ files: [file] }));
+                }
+                
+                // Try Web Share API - just try it directly instead of checking canShare
+                if (navigator.share) {
+                    try {
+                        await navigator.share({
+                            files: [file],
+                            title: 'Collapse Score: ' + grid.score,
+                            text: 'I scored ' + grid.score + ' in Collapse!'
+                        });
+                        
+                        achievementNotification = "Shared!";
+                        achievementNotificationTime = Date.now();
+                    } catch (shareErr) {
+                        if (shareErr.name === 'AbortError') {
+                            // User cancelled, no notification needed
+                        } else if (shareErr.name === 'NotAllowedError' || shareErr.name === 'TypeError') {
+                            // Files not supported, try sharing without files
+                            console.log('File sharing failed, trying without files:', shareErr);
+                            try {
+                                await navigator.share({
+                                    title: 'Collapse Score: ' + grid.score,
+                                    text: 'I scored ' + grid.score + ' in Collapse! Play at collapse.antontobi.com',
+                                    url: 'https://collapse.antontobi.com'
+                                });
+                                achievementNotification = "Shared!";
+                                achievementNotificationTime = Date.now();
+                            } catch (shareErr2) {
+                                if (shareErr2.name !== 'AbortError') {
+                                    console.log('Text-only share also failed:', shareErr2);
+                                    throw shareErr2;
+                                }
+                            }
+                        } else {
+                            throw shareErr;
+                        }
+                    }
                 } else if (navigator.clipboard && navigator.clipboard.write) {
                     // Fallback to clipboard
                     const clipboardItem = new ClipboardItem({ 'image/png': blob });
@@ -948,29 +993,16 @@ async function shareScore() {
                     achievementNotificationTime = Date.now();
                 } else {
                     // No share or clipboard support
-                    throw new Error("Share and Clipboard APIs not supported");
+                    downloadImage();
                 }
             } catch (err) {
-                // User cancelled share dialog, or other error
-                if (err.name === 'AbortError') {
-                    // User cancelled, no notification needed
-                } else {
-                    console.error('Failed to share/copy image:', err);
-                    // Fallback to download on error
-                    try {
-                        let url = URL.createObjectURL(blob);
-                        let a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'collapse-score-' + grid.score + '.png';
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        
-                        achievementNotification = "Downloading image!";
-                        achievementNotificationTime = Date.now();
-                    } catch (downloadErr) {
-                        achievementNotification = "Failed to download image";
-                        achievementNotificationTime = Date.now();
-                    }
+                console.error('Failed to share/copy image:', err);
+                // Fallback to download on error
+                try {
+                    downloadImage();
+                } catch (downloadErr) {
+                    achievementNotification = "Failed to download image";
+                    achievementNotificationTime = Date.now();
                 }
             }
             
