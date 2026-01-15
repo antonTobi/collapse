@@ -926,34 +926,51 @@ async function shareScore() {
         // Convert to blob
         canvasElement.toBlob(async (blob) => {
             try {
-                // Try to copy to clipboard using the Clipboard API
-                if (navigator.clipboard && navigator.clipboard.write) {
+                // Create a File object from the blob for Web Share API
+                const file = new File([blob], 'collapse-score-' + grid.score + '.png', { type: 'image/png' });
+                
+                // Try Web Share API first (native share dialog)
+                if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    await navigator.share({
+                        files: [file],
+                        title: 'Collapse Score: ' + grid.score,
+                        text: 'I scored ' + grid.score + ' in Collapse!'
+                    });
+                    
+                    achievementNotification = "Shared!";
+                    achievementNotificationTime = Date.now();
+                } else if (navigator.clipboard && navigator.clipboard.write) {
+                    // Fallback to clipboard
                     const clipboardItem = new ClipboardItem({ 'image/png': blob });
                     await navigator.clipboard.write([clipboardItem]);
                     
-                    // Show success notification
                     achievementNotification = "Image copied to clipboard!";
                     achievementNotificationTime = Date.now();
                 } else {
-                    // No clipboard support, download the image
-                    throw new Error("Clipboard API not supported");
+                    // No share or clipboard support
+                    throw new Error("Share and Clipboard APIs not supported");
                 }
             } catch (err) {
-                console.error('Failed to copy image:', err);
-                // Fallback to download on error
-                try {
-                    let url = URL.createObjectURL(blob);
-                    let a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'collapse-score-' + grid.score + '.png';
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    
-                    achievementNotification = "Score image downloaded!";
-                    achievementNotificationTime = Date.now();
-                } catch (downloadErr) {
-                    achievementNotification = "Failed to download image";
-                    achievementNotificationTime = Date.now();
+                // User cancelled share dialog, or other error
+                if (err.name === 'AbortError') {
+                    // User cancelled, no notification needed
+                } else {
+                    console.error('Failed to share/copy image:', err);
+                    // Fallback to download on error
+                    try {
+                        let url = URL.createObjectURL(blob);
+                        let a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'collapse-score-' + grid.score + '.png';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        
+                        achievementNotification = "Downloading image!";
+                        achievementNotificationTime = Date.now();
+                    } catch (downloadErr) {
+                        achievementNotification = "Failed to download image";
+                        achievementNotificationTime = Date.now();
+                    }
                 }
             }
             
