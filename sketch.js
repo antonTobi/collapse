@@ -913,6 +913,42 @@ function drawShapeTo(gfx, shape, centerX, centerY, cellSize, fillColor) {
 }
 
 async function shareScore() {
+    // Check BEFORE any async work if file sharing is supported
+    // We need to do text-only share synchronously if files aren't supported
+    // because the user gesture expires after async operations
+    
+    let canShareFiles = false;
+    if (navigator.share && navigator.canShare) {
+        // Create a dummy file to test if file sharing is supported
+        const testBlob = new Blob(['test'], { type: 'image/png' });
+        const testFile = new File([testBlob], 'test.png', { type: 'image/png' });
+        canShareFiles = navigator.canShare({ files: [testFile] });
+    }
+    
+    console.log('Can share files:', canShareFiles);
+    
+    // If file sharing is NOT supported but share API exists, share text-only immediately
+    if (navigator.share && !canShareFiles) {
+        try {
+            await navigator.share({
+                title: 'Collapse Score: ' + grid.score,
+                text: 'I scored ' + grid.score + ' in Collapse! Play at collapse.antontobi.com',
+                url: 'https://collapse.antontobi.com'
+            });
+            achievementNotification = "Shared!";
+            achievementNotificationTime = Date.now();
+            loop();
+            return;
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                // User cancelled
+                return;
+            }
+            console.log('Text-only share failed:', err);
+            // Fall through to try other methods
+        }
+    }
+    
     try {
         // Create an off-screen graphics buffer
         let shareGfx = createGraphics(width, height);
@@ -942,15 +978,8 @@ async function shareScore() {
                 // Create a File object from the blob for Web Share API
                 const file = new File([blob], 'collapse-score-' + grid.score + '.png', { type: 'image/png' });
                 
-                // Debug logging
-                console.log('Share API available:', !!navigator.share);
-                console.log('canShare available:', !!navigator.canShare);
-                if (navigator.canShare) {
-                    console.log('canShare files:', navigator.canShare({ files: [file] }));
-                }
-                
-                // Try Web Share API - just try it directly instead of checking canShare
-                if (navigator.share) {
+                // Try Web Share API with files (only if supported)
+                if (canShareFiles) {
                     try {
                         await navigator.share({
                             files: [file],
@@ -963,23 +992,6 @@ async function shareScore() {
                     } catch (shareErr) {
                         if (shareErr.name === 'AbortError') {
                             // User cancelled, no notification needed
-                        } else if (shareErr.name === 'NotAllowedError' || shareErr.name === 'TypeError') {
-                            // Files not supported, try sharing without files
-                            console.log('File sharing failed, trying without files:', shareErr);
-                            try {
-                                await navigator.share({
-                                    title: 'Collapse Score: ' + grid.score,
-                                    text: 'I scored ' + grid.score + ' in Collapse! Play at collapse.antontobi.com',
-                                    url: 'https://collapse.antontobi.com'
-                                });
-                                achievementNotification = "Shared!";
-                                achievementNotificationTime = Date.now();
-                            } catch (shareErr2) {
-                                if (shareErr2.name !== 'AbortError') {
-                                    console.log('Text-only share also failed:', shareErr2);
-                                    throw shareErr2;
-                                }
-                            }
                         } else {
                             throw shareErr;
                         }
