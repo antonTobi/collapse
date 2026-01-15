@@ -17,6 +17,10 @@ let canvas; // Canvas reference for event listeners
 
 let debug = false; // Set to true to enable debug features
 
+// Discord link bounds for click detection
+let discordLinkBounds = null;
+const DISCORD_URL = "https://discord.gg/4EgJ8rjVag";
+
 // Achievement notification
 let achievementNotification = null; // Text to display
 let achievementNotificationTime = 0; // Timestamp when notification was set
@@ -95,7 +99,7 @@ document.body.style.backgroundColor = bgLight;
 // ============================================================================
 
 function draw() {
-    clear();
+    background(bgLight);
     grid.draw();
 
     let over = grid.gameOver && grid.settled;
@@ -311,8 +315,8 @@ function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) 
         "  possible!",
     ];
 
-    // Calculate total height
-    let totalHeight = lines.length * 28 + 20;
+    // Calculate total height (including Discord link)
+    let totalHeight = lines.length * 28 + 20 + 56; // Extra space for Discord link
 
     // Clamp scroll position
     let maxScroll = Math.max(0, totalHeight - contentHeight);
@@ -334,6 +338,35 @@ function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) 
     for (let line of lines) {
         text(line, panelX + 20, y);
         y += 28;
+    }
+
+    // Draw Discord link (blue and underlined)
+    y += 28; // Extra spacing before Discord link
+    let discordText = "Join our Discord server!";
+    fill(100, 150, 255); // Blue color
+    textAlign(CENTER, TOP);
+    let linkX = width / 2;
+    text(discordText, linkX, y);
+    
+    // Draw underline
+    let linkWidth = textWidth(discordText);
+    let linkHeight = 20;
+    stroke(100, 150, 255);
+    strokeWeight(1);
+    line(linkX - linkWidth / 2, y + linkHeight, linkX + linkWidth / 2, y + linkHeight);
+    noStroke();
+    
+    // Store link bounds for click detection (only if visible in content area)
+    let linkY = y;
+    if (linkY >= contentStartY - linkHeight && linkY <= contentStartY + contentHeight) {
+        discordLinkBounds = {
+            x: linkX - linkWidth / 2,
+            y: Math.max(contentStartY, linkY),
+            width: linkWidth,
+            height: linkHeight + 5
+        };
+    } else {
+        discordLinkBounds = null;
     }
 
     drawingContext.restore();
@@ -902,6 +935,15 @@ function onClick() {
                     }
                 }
 
+                // Check if clicking Discord link on howtoplay tab
+                if (currentMenuTab === "howtoplay" && discordLinkBounds) {
+                    if (mouseX >= discordLinkBounds.x && mouseX <= discordLinkBounds.x + discordLinkBounds.width &&
+                        mouseY >= discordLinkBounds.y && mouseY <= discordLinkBounds.y + discordLinkBounds.height) {
+                        window.open(DISCORD_URL, '_blank');
+                        return;
+                    }
+                }
+
                 // Check if clicking edit name button on leaderboard
                 if ((currentMenuTab === "daily" || currentMenuTab === "alltime")) {
                     let contentStartY = 110 + 35 + 35; // tabY + tabHeight + title
@@ -933,6 +975,18 @@ function onClick() {
         }
     }
     redraw();
+}
+
+function mouseMoved() {
+    // Update cursor based on hover state
+    if (showMenu && currentMenuTab === "howtoplay" && discordLinkBounds) {
+        if (mouseX >= discordLinkBounds.x && mouseX <= discordLinkBounds.x + discordLinkBounds.width &&
+            mouseY >= discordLinkBounds.y && mouseY <= discordLinkBounds.y + discordLinkBounds.height) {
+            cursor(HAND);
+            return;
+        }
+    }
+    cursor(ARROW);
 }
 
 function mouseWheel(event) {
