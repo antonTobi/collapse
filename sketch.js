@@ -124,8 +124,8 @@ function draw() {
 
     textSize(15);
     if (over) {
-        // Draw "Share score" link
-        let shareText = "Share score";
+        // Draw "Share" link
+        let shareText = "Share";
         let shareTextW = textWidth(shareText);
         let shareTextX = width / 2;
         let shareTextY = 66;
@@ -913,124 +913,143 @@ function drawShapeTo(gfx, shape, centerX, centerY, cellSize, fillColor) {
 }
 
 async function shareScore() {
-    // Check BEFORE any async work if file sharing is supported
-    // We need to do text-only share synchronously if files aren't supported
-    // because the user gesture expires after async operations
+    // Fallback chain:
+    // 1. Image share (Web Share API with files)
+    // 2. Copy image to clipboard
+    // 3. Download image
+    // 4. Text share with link
+    // 5. Copy text to clipboard
     
+    const shareText = 'I scored ' + grid.score + ' in Collapse! Play at collapse.antontobi.com';
+    
+    // Check if file sharing is supported (before async work)
     let canShareFiles = false;
     if (navigator.share && navigator.canShare) {
-        // Create a dummy file to test if file sharing is supported
         const testBlob = new Blob(['test'], { type: 'image/png' });
         const testFile = new File([testBlob], 'test.png', { type: 'image/png' });
         canShareFiles = navigator.canShare({ files: [testFile] });
     }
     
-    console.log('Can share files:', canShareFiles);
+    // If we can share files, generate image and share it
+    if (canShareFiles) {
+        try {
+            let shareGfx = createGraphics(width, height);
+            drawShareVersion(shareGfx);
+            let canvasElement = shareGfx.elt;
+            
+            canvasElement.toBlob(async (blob) => {
+                try {
+                    const file = new File([blob], 'collapse-score-' + grid.score + '.png', { type: 'image/png' });
+                    await navigator.share({
+                        files: [file],
+                        title: 'Collapse Score: ' + grid.score,
+                        text: 'I scored ' + grid.score + ' in Collapse!'
+                    });
+                    achievementNotification = "Shared!";
+                    achievementNotificationTime = Date.now();
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        console.error('Image share failed:', err);
+                        // Try fallback 2: copy image to clipboard
+                        await tryImageFallbacks(blob, shareText);
+                    }
+                }
+                shareGfx.remove();
+                loop();
+            }, 'image/png');
+            return;
+        } catch (err) {
+            console.error('Failed to generate share image:', err);
+        }
+    }
     
-    // If file sharing is NOT supported but share API exists, share text-only immediately
-    if (navigator.share && !canShareFiles) {
+    // Can't share files - try clipboard/download/text fallbacks
+    try {
+        let shareGfx = createGraphics(width, height);
+        drawShareVersion(shareGfx);
+        let canvasElement = shareGfx.elt;
+        
+        canvasElement.toBlob(async (blob) => {
+            await tryImageFallbacks(blob, shareText);
+            shareGfx.remove();
+            loop();
+        }, 'image/png');
+    } catch (err) {
+        console.error('Failed to generate image:', err);
+        // Last resort: text fallbacks
+        await tryTextFallbacks(shareText);
+        loop();
+    }
+}
+
+async function tryImageFallbacks(blob, shareText) {
+    // Fallback 2: Copy image to clipboard
+    if (navigator.clipboard && navigator.clipboard.write) {
+        try {
+            const clipboardItem = new ClipboardItem({ 'image/png': blob });
+            await navigator.clipboard.write([clipboardItem]);
+            achievementNotification = "Image copied to clipboard!";
+            achievementNotificationTime = Date.now();
+            return;
+        } catch (err) {
+            console.error('Clipboard image failed:', err);
+        }
+    }
+    
+    // Fallback 3: Download image
+    try {
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = 'collapse-score-' + grid.score + '.png';
+        a.click();
+        URL.revokeObjectURL(url);
+        achievementNotification = "Image downloaded!";
+        achievementNotificationTime = Date.now();
+        return;
+    } catch (err) {
+        console.error('Download failed:', err);
+    }
+    
+    // Fallback 4 & 5: Text fallbacks
+    await tryTextFallbacks(shareText);
+}
+
+async function tryTextFallbacks(shareText) {
+    // Fallback 4: Text share with link
+    if (navigator.share) {
         try {
             await navigator.share({
                 title: 'Collapse Score: ' + grid.score,
-                text: 'I scored ' + grid.score + ' in Collapse! Play at collapse.antontobi.com',
+                text: shareText,
                 url: 'https://collapse.antontobi.com'
             });
             achievementNotification = "Shared!";
             achievementNotificationTime = Date.now();
-            loop();
             return;
         } catch (err) {
-            if (err.name === 'AbortError') {
-                // User cancelled
-                return;
+            if (err.name !== 'AbortError') {
+                console.error('Text share failed:', err);
+            } else {
+                return; // User cancelled
             }
-            console.log('Text-only share failed:', err);
-            // Fall through to try other methods
         }
     }
     
-    try {
-        // Create an off-screen graphics buffer
-        let shareGfx = createGraphics(width, height);
-        
-        // Draw the share version to the off-screen buffer
-        drawShareVersion(shareGfx);
-        
-        // Get the off-screen canvas element
-        let canvasElement = shareGfx.elt;
-        
-        // Convert to blob
-        canvasElement.toBlob(async (blob) => {
-            // Helper function to download the image
-            const downloadImage = () => {
-                let url = URL.createObjectURL(blob);
-                let a = document.createElement('a');
-                a.href = url;
-                a.download = 'collapse-score-' + grid.score + '.png';
-                a.click();
-                URL.revokeObjectURL(url);
-                
-                achievementNotification = "Downloading image!";
-                achievementNotificationTime = Date.now();
-            };
-            
-            try {
-                // Create a File object from the blob for Web Share API
-                const file = new File([blob], 'collapse-score-' + grid.score + '.png', { type: 'image/png' });
-                
-                // Try Web Share API with files (only if supported)
-                if (canShareFiles) {
-                    try {
-                        await navigator.share({
-                            files: [file],
-                            title: 'Collapse Score: ' + grid.score,
-                            text: 'I scored ' + grid.score + ' in Collapse!'
-                        });
-                        
-                        achievementNotification = "Shared!";
-                        achievementNotificationTime = Date.now();
-                    } catch (shareErr) {
-                        if (shareErr.name === 'AbortError') {
-                            // User cancelled, no notification needed
-                        } else {
-                            throw shareErr;
-                        }
-                    }
-                } else if (navigator.clipboard && navigator.clipboard.write) {
-                    // Fallback to clipboard
-                    const clipboardItem = new ClipboardItem({ 'image/png': blob });
-                    await navigator.clipboard.write([clipboardItem]);
-                    
-                    achievementNotification = "Image copied to clipboard!";
-                    achievementNotificationTime = Date.now();
-                } else {
-                    // No share or clipboard support
-                    downloadImage();
-                }
-            } catch (err) {
-                console.error('Failed to share/copy image:', err);
-                // Fallback to download on error
-                try {
-                    downloadImage();
-                } catch (downloadErr) {
-                    achievementNotification = "Failed to download image";
-                    achievementNotificationTime = Date.now();
-                }
-            }
-            
-            // Clean up the off-screen buffer
-            shareGfx.remove();
-            
-            // Trigger redraw for notification
-            loop();
-        }, 'image/png');
-        
-    } catch (err) {
-        console.error('Failed to generate share image:', err);
-        achievementNotification = "Failed to generate image";
-        achievementNotificationTime = Date.now();
-        loop();
+    // Fallback 5: Copy text to clipboard
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(shareText);
+            achievementNotification = "Text copied to clipboard!";
+            achievementNotificationTime = Date.now();
+            return;
+        } catch (err) {
+            console.error('Text clipboard failed:', err);
+        }
     }
+    
+    achievementNotification = "Unable to share";
+    achievementNotificationTime = Date.now();
 }
 
 // ============================================================================
