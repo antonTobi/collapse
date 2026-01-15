@@ -36,7 +36,7 @@ class Box {
 // ============================================================================
 
 class NumberGrid {
-    constructor(w, h, seed = Date.now(), moves = "") {
+    constructor(w, h, seed = Date.now(), moves = "", skipAnimation = false) {
         this.w = w;
         this.h = h;
         this.score = 0;
@@ -63,7 +63,7 @@ class NumberGrid {
 
         this.refill();
 
-        if (moves.length) {
+        if (moves.length || skipAnimation) {
             this.isReplaying = true;
             let tic = performance.now();
             for (let c of moves) {
@@ -73,6 +73,7 @@ class NumberGrid {
                 this.do(i, j);
             }
 
+            // Snap all boxes to their final positions (skip animation)
             for (let i = 0; i < this.w; i++) {
                 for (let j = 0; j < this.h; j++) {
                     let box = this[i][j];
@@ -83,7 +84,9 @@ class NumberGrid {
 
             let toc = performance.now();
 
-            console.log(`Replayed ${moves.length} moves in ${toc - tic} ms`);
+            if (moves.length) {
+                console.log(`Replayed ${moves.length} moves in ${toc - tic} ms`);
+            }
             this.isReplaying = false;
         }
         this.gameOver = this.noLegalMoves();
@@ -152,8 +155,6 @@ class NumberGrid {
             if (this.noLegalMoves()) {
                 this.gameOver = true;
                 this.scoreSplitDiff = null;
-                removeItem("autoSaveSeed");
-                removeItem("autoSaveMoves");
                 saveHighScore(this.score, this.seed, grid.moves.join(""));
 
                 // Only save splits if this is a new daily record
@@ -171,9 +172,9 @@ class NumberGrid {
                     // Add to game history
                     addToGameHistory(this.score);
                 }
-            } else {
-                storeItem("autoSaveMoves", grid.moves.join(""));
             }
+            // Save moves for both ongoing games and game over (to persist game over state)
+            storeItem("autoSaveMoves", grid.moves.join(""));
             loop();
         }
     }

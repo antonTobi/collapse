@@ -21,6 +21,9 @@ let debug = false; // Set to true to enable debug features
 let discordLinkBounds = null;
 const DISCORD_URL = "https://discord.gg/4EgJ8rjVag";
 
+// Share button bounds for click detection
+let shareButtonBounds = null;
+
 // Achievement notification
 let achievementNotification = null; // Text to display
 let achievementNotificationTime = 0; // Timestamp when notification was set
@@ -77,7 +80,7 @@ function setup() {
     let autoSaveSeed = getItem("autoSaveSeed");
     if (autoSaveSeed !== null) {
         let moves = getItem("autoSaveMoves") || "";
-        grid = new NumberGrid(w, h, autoSaveSeed, moves.split(""));
+        grid = new NumberGrid(w, h, autoSaveSeed, moves.split(""), true); // skipAnimation = true
     } else {
         newGame();
     }
@@ -121,9 +124,38 @@ function draw() {
 
     textSize(15);
     if (over) {
-        text("Game over!", width / 2, 66)
-    } else if (grid.scoreSplits.length > 0) {
-        text(grid.displaySplit, width / 2, 66);
+        // Draw "Share score" link
+        let shareText = "Share score";
+        let shareTextW = textWidth(shareText);
+        let shareTextX = width / 2;
+        let shareTextY = 66;
+        let shareTextHeight = 15;
+        
+        // Store bounds for click detection
+        shareButtonBounds = {
+            x: shareTextX - shareTextW / 2,
+            y: shareTextY - shareTextHeight / 2,
+            width: shareTextW,
+            height: shareTextHeight + 5
+        };
+        
+        // Draw link text
+        fill(255);
+        noStroke();
+        text(shareText, shareTextX, shareTextY);
+        
+        // Draw underline
+        stroke(255);
+        strokeWeight(1);
+        line(shareTextX - shareTextW / 2, shareTextY + shareTextHeight / 2 + 1, 
+             shareTextX + shareTextW / 2, shareTextY + shareTextHeight / 2 + 1);
+        noStroke();
+        strokeWeight(2);
+    } else {
+        shareButtonBounds = null;
+        if (grid.scoreSplits.length > 0) {
+            text(grid.displaySplit, width / 2, 66);
+        }
     }
 
     // Draw achievement notification if active
@@ -795,6 +827,147 @@ function calculateShapeMatches() {
 }
 
 // ============================================================================
+// Share Score Functions
+// ============================================================================
+
+function drawShareVersion(gfx) {
+    // Draw a share-friendly version to the provided graphics buffer
+    // No buttons, with URL centered under score
+    
+    gfx.background(bgLight);
+    
+    // Draw the grid boxes manually to the graphics buffer
+    for (let i = 0; i < grid.w; i++) {
+        for (let j = 0; j < grid.h; j++) {
+            const box = grid[i][j];
+            if (box.y < 1) continue;
+            
+            gfx.fill(boxColors[box.n]);
+            gfx.noStroke();
+            gfx.square(box.x + 1, box.y + 1, S - 2);
+            
+            gfx.textAlign(CENTER, CENTER);
+            gfx.textSize(0.7 * S);
+            let x = box.x + S * 0.5;
+            let y = box.y + S * 0.5;
+            if (box.n < 6) {
+                gfx.fill(255, 230);
+                gfx.noStroke();
+                gfx.text(box.n, x, y + 0.05 * S);
+            } else {
+                // Draw shape
+                drawShapeTo(gfx, box.shape, x, y - 9, 9, 200);
+                // Draw split score underneath
+                gfx.fill(200);
+                gfx.textSize(15);
+                gfx.text(box.split, x, y + 26);
+            }
+        }
+    }
+
+    // Draw score bar background (game over style - black)
+    gfx.noStroke();
+    gfx.fill(0);
+    gfx.rect(1, 1, w * S - 2, S - 1);
+
+    // Draw score
+    gfx.fill(255);
+    gfx.textAlign(CENTER, CENTER);
+    gfx.textSize(36);
+    gfx.text(grid.score, width / 2, 38);
+
+    // Draw URL centered under score
+    gfx.textSize(15);
+    gfx.text("collapse.antontobi.com", width / 2, 66);
+}
+
+function drawShapeTo(gfx, shape, centerX, centerY, cellSize, fillColor) {
+    // Draw a shape to a graphics buffer (mirrors drawShape from game.js)
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const [cx, cy] of shape) {
+        minX = Math.min(minX, cx);
+        minY = Math.min(minY, cy);
+        maxX = Math.max(maxX, cx);
+        maxY = Math.max(maxY, cy);
+    }
+
+    const cellWidth = maxX - minX + 1;
+    const cellHeight = maxY - minY + 1;
+    const pixelWidth = cellWidth * cellSize;
+    const pixelHeight = cellHeight * cellSize;
+    const startX = centerX - Math.floor(pixelWidth / 2);
+    const startY = centerY - Math.floor(pixelHeight / 2);
+
+    gfx.noStroke();
+    gfx.fill(fillColor);
+
+    for (const [cx, cy] of shape) {
+        const xPos = startX + (cx - minX) * cellSize;
+        const yPos = startY + (cy - minY) * cellSize;
+        gfx.rect(xPos + 1, yPos + 1, cellSize - 2, cellSize - 2);
+    }
+}
+
+async function shareScore() {
+    try {
+        // Create an off-screen graphics buffer
+        let shareGfx = createGraphics(width, height);
+        
+        // Draw the share version to the off-screen buffer
+        drawShareVersion(shareGfx);
+        
+        // Get the off-screen canvas element
+        let canvasElement = shareGfx.elt;
+        
+        // Convert to blob
+        canvasElement.toBlob(async (blob) => {
+            try {
+                // Try to copy to clipboard using the Clipboard API
+                if (navigator.clipboard && navigator.clipboard.write) {
+                    const clipboardItem = new ClipboardItem({ 'image/png': blob });
+                    await navigator.clipboard.write([clipboardItem]);
+                    
+                    // Show success notification
+                    achievementNotification = "Image copied to clipboard!";
+                    achievementNotificationTime = Date.now();
+                } else {
+                    // Fallback: download the image
+                    let url = URL.createObjectURL(blob);
+                    let a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'collapse-score-' + grid.score + '.png';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    
+                    achievementNotification = "Score image downloaded!";
+                    achievementNotificationTime = Date.now();
+                }
+            } catch (err) {
+                console.error('Failed to copy image:', err);
+                achievementNotification = "Failed to copy image";
+                achievementNotificationTime = Date.now();
+            }
+            
+            // Clean up the off-screen buffer
+            shareGfx.remove();
+            
+            // Trigger redraw for notification
+            loop();
+        }, 'image/png');
+        
+    } catch (err) {
+        console.error('Failed to generate share image:', err);
+        achievementNotification = "Failed to share score";
+        achievementNotificationTime = Date.now();
+        loop();
+    }
+}
+
+// ============================================================================
 // Event Handlers
 // ============================================================================
 
@@ -829,6 +1002,14 @@ function handleDocumentClick(event) {
 
 function onClick() {
     if (mouseY < 80) {
+        // Check if clicking share button (when game is over)
+        if (shareButtonBounds && 
+            mouseX >= shareButtonBounds.x && mouseX <= shareButtonBounds.x + shareButtonBounds.width &&
+            mouseY >= shareButtonBounds.y && mouseY <= shareButtonBounds.y + shareButtonBounds.height) {
+            shareScore();
+            return;
+        }
+        
         // Header area - always accessible
         if (mouseX > width - 80) {
             // Reset button (top right)
@@ -979,6 +1160,15 @@ function onClick() {
 
 function mouseMoved() {
     // Update cursor based on hover state
+    
+    // Check for share button hover
+    if (shareButtonBounds && 
+        mouseX >= shareButtonBounds.x && mouseX <= shareButtonBounds.x + shareButtonBounds.width &&
+        mouseY >= shareButtonBounds.y && mouseY <= shareButtonBounds.y + shareButtonBounds.height) {
+        cursor(HAND);
+        return;
+    }
+    
     if (showMenu && currentMenuTab === "howtoplay" && discordLinkBounds) {
         if (mouseX >= discordLinkBounds.x && mouseX <= discordLinkBounds.x + discordLinkBounds.width &&
             mouseY >= discordLinkBounds.y && mouseY <= discordLinkBounds.y + discordLinkBounds.height) {
