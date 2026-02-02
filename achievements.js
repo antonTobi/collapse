@@ -374,8 +374,10 @@ function checkSpecialAchievements() {
     }
     
     // Check time-based achievements (only during active gameplay)
-    if (grid.firstMoveTime !== null && !grid.gameOver) {
-        let elapsed = Date.now() - grid.firstMoveTime;
+    // If firstMoveTime is not set (stale client), assume it was 1 hour ago to prevent false awards
+    let startTime = grid.firstMoveTime !== null ? grid.firstMoveTime : (Date.now() - 3600000);
+    if (!grid.gameOver) {
+        let elapsed = Date.now() - startTime;
         
         // 1000 points in 1 minute (60000ms)
         if (grid.score >= 1000 && elapsed <= 60000) {
