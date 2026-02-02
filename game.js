@@ -7,26 +7,28 @@ class Box {
         Object.assign(this, { n, x, y, vy: 0 });
     }
 
-    draw() {
+    draw(gridI, gridJ) {
         if (this.y < 1) return;
         fill(boxColors[this.n]);
         noStroke();
         square(this.x + 1, this.y + 1, S - 2);
 
+        // Check if this tile is in a locked region based on challenge mode
+        let challengeMode = (typeof settings !== 'undefined') ? settings.challengeMode : "none";
+        let isLocked = (challengeMode === "bottomrow" && gridJ === 0) ||
+                       (challengeMode === "middlecolumn" && gridI === 2);
+
         textSize(0.7 * S);
         let x = this.x + S * 0.5;
         let y = this.y + S * 0.5;
         if (this.n < 6) {
-            fill(255, 230);
+            // Draw number at 50% opacity if locked, full opacity otherwise
+            fill(255, isLocked ? 115 : 230);
             noStroke();
             text(this.n, x, y + 0.05 * S);
         } else {
-            // Draw shape slightly smaller and moved up
-            drawShape(this.shape, x, y - 9, 9, 200);
-            // Draw split score underneath
-            fill(200);
-            textSize(15);
-            text(this.split, x, y + 26);
+            // Draw shape centered in the tile
+            drawShape(this.shape, x, y, 9, 200);
         }
     }
 }
@@ -60,6 +62,9 @@ class NumberGrid {
         this.polyominoList = [];
         this.isReplaying = false;
         this.largestChains = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; // Track largest chain for each tile type
+        this.firstMoveTime = null; // Time of first move
+        this.lastMoveTime = null; // Time of final move
+        this.clickedPositions = new Set(); // Track which positions (i,j) were clicked during this game
 
         this.refill();
 
@@ -106,27 +111,36 @@ class NumberGrid {
         let dt = deltaTime / 18;
         if (dt > 2) dt = 2;
 
+        // Check if animation should be skipped
+        let skipAnim = typeof settings !== 'undefined' && settings.disableAnimation;
+
         for (let i = 0; i < this.w; i++) {
             for (let j = 0; j < this.h; j++) {
                 const box = this[i][j];
                 const targetY = Y + S * (this.h - 1 - j);
 
                 if (box.y < targetY || box.vy !== 0) {
-                    this.settled = false;
-                    box.vy += gravity * dt;
-                    box.y += box.vy * dt;
-
-                    if (box.y >= targetY && box.vy > 0) {
+                    if (skipAnim) {
+                        // Skip animation: snap to target position
                         box.y = targetY;
-                        if (box.vy > 1) {
-                            box.vy *= -bounceFactor;
-                        } else {
-                            box.vy = 0;
+                        box.vy = 0;
+                    } else {
+                        this.settled = false;
+                        box.vy += gravity * dt;
+                        box.y += box.vy * dt;
+
+                        if (box.y >= targetY && box.vy > 0) {
+                            box.y = targetY;
+                            if (box.vy > 1) {
+                                box.vy *= -bounceFactor;
+                            } else {
+                                box.vy = 0;
+                            }
                         }
                     }
                 }
 
-                box.draw();
+                box.draw(i, j);
             }
         }
     }
@@ -150,8 +164,19 @@ class NumberGrid {
         let [i, j] = this.getCoordinates(mx, my);
         if (!this?.[i]?.[j]) return;
 
+        // Check if position is blocked by challenge mode
+        if (typeof settings !== 'undefined') {
+            if (settings.challengeMode === "bottomrow" && j === 0) return;
+            if (settings.challengeMode === "middlecolumn" && i === 2) return;
+        }
+
         let scoreGain = this.do(i, j);
         if (scoreGain) {
+            // Track clicked position (only during live gameplay)
+            if (!this.isReplaying) {
+                this.clickedPositions.add(`${i},${j}`);
+            }
+            
             if (this.noLegalMoves()) {
                 this.gameOver = true;
                 this.scoreSplitDiff = null;
@@ -171,6 +196,11 @@ class NumberGrid {
                     updatePersonalWorst(this.score);
                     // Add to game history
                     addToGameHistory(this.score);
+                    // Schedule popup after delay (handled in draw loop)
+                    if (settings.gameOverPopup !== "nothing") {
+                        gameOverPopupPending = true;
+                        gameOverSettledTime = null;
+                    }
                 }
             }
             // Save moves for both ongoing games and game over (to persist game over state)
@@ -193,6 +223,17 @@ class NumberGrid {
         this.moves.push(alphabet[5 * j + i]);
         let scoreGain = n * chain.length;
         this.score += scoreGain;
+        
+        // Track move times (only during live gameplay)
+        if (!this.isReplaying) {
+            let now = Date.now();
+            if (this.firstMoveTime === null) {
+                this.firstMoveTime = now;
+                storeItem("autoSaveFirstMoveTime", now);
+            }
+            this.lastMoveTime = now;
+            storeItem("autoSaveLastMoveTime", now);
+        }
         
         // Track largest chain for this tile type (only during live gameplay)
         if (!this.isReplaying && chain.length > this.largestChains[n]) {
@@ -292,8 +333,15 @@ class NumberGrid {
     }
 
     noLegalMoves() {
+        // Get challenge mode setting (if available)
+        let challengeMode = (typeof settings !== 'undefined') ? settings.challengeMode : "none";
+        
         for (let i = 0; i < this.w; i++) {
             for (let j = 0; j < this.h; j++) {
+                // Skip blocked positions based on challenge mode
+                if (challengeMode === "bottomrow" && j === 0) continue;
+                if (challengeMode === "middlecolumn" && i === 2) continue;
+                
                 if (this[i][j].n < 6 && this.getChainWithCoords(i, j)[0].length > 1) {
                     return false;
                 }
@@ -324,6 +372,12 @@ function newGame() {
         return;
     }
     
+    // Reset game over popup state
+    if (typeof gameOverPopupPending !== 'undefined') {
+        gameOverPopupPending = false;
+        gameOverSettledTime = null;
+    }
+    
     // If there's an ongoing game (not already game over), count it as completed
     if (grid && !grid.gameOver && grid.moves.length > 0) {
         updateStatistics(grid.score, grid.largestChains);
@@ -333,6 +387,8 @@ function newGame() {
     grid = new NumberGrid(w, h);
     storeItem("autoSaveSeed", grid.seed);
     removeItem("autoSaveMoves");
+    removeItem("autoSaveFirstMoveTime");
+    removeItem("autoSaveLastMoveTime");
 }
 
 // ============================================================================

@@ -10,6 +10,7 @@ let currentUserDisplayName = null;
 // Leaderboard State
 let topScoresDaily = [];
 let topScoresAllTime = [];
+let topScoresYesterday = [];
 let showLeaderboard = false;
 let showAllTime = false;
 let isLoadingScores = false;
@@ -33,6 +34,12 @@ let dailyBestScore = 0;
 function getTodayDateString() {
     const today = new Date();
     return `${today.getUTCFullYear()}-${today.getUTCMonth() + 1}-${today.getUTCDate()}`;
+}
+
+function getYesterdayDateString() {
+    const yesterday = new Date();
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    return `${yesterday.getUTCFullYear()}-${yesterday.getUTCMonth() + 1}-${yesterday.getUTCDate()}`;
 }
 
 // ============================================================================
@@ -157,6 +164,21 @@ async function saveHighScore(score, seed, moves) {
     }
 
     try {
+        // Refresh display name from database if it's null or looks like a default name
+        // This handles cases where the connection was lost or the name wasn't loaded properly
+        if (!currentUserDisplayName || currentUserDisplayName.startsWith("Player ")) {
+            try {
+                const freshDisplayName = await getOrCreateUserDocument(currentUser.uid);
+                // Only update if we got a non-default name
+                if (freshDisplayName && !freshDisplayName.startsWith("Player ")) {
+                    currentUserDisplayName = freshDisplayName;
+                    console.log("Refreshed display name:", currentUserDisplayName);
+                }
+            } catch (refreshError) {
+                console.warn("Could not refresh display name:", refreshError);
+            }
+        }
+
         const timestamp = firebase.firestore.FieldValue.serverTimestamp();
         const scoreData = {
             userId: currentUser.uid,
@@ -262,6 +284,43 @@ async function fetchTopScores(fetchAllTime = showAllTime) {
         redraw();
     } catch (error) {
         console.error("Error fetching top scores:", error);
+        isLoadingScores = false;
+    }
+}
+
+async function fetchYesterdayScores() {
+    isLoadingScores = true;
+    try {
+        const yesterday = getYesterdayDateString();
+        const snapshot = await db.collection('dailyhighscores').doc(yesterday).collection('scores')
+            .orderBy('score', 'desc')
+            .limit(16)
+            .get();
+
+        // Extract scores with display names already included
+        let scores = snapshot.docs.map(doc => doc.data());
+
+        // Deduplicate by display name, keeping highest score for each name
+        const nameBestScores = new Map();
+        scores.forEach(score => {
+            const name = score.displayName || `Player ${score.userId.substring(0, 6)}`;
+            if (!nameBestScores.has(name) || score.score > nameBestScores.get(name).score) {
+                nameBestScores.set(name, { ...score, displayName: name });
+            }
+        });
+
+        // Convert to array, sort by score descending, and take top 10
+        scores = Array.from(nameBestScores.values());
+        scores.sort((a, b) => b.score - a.score);
+        scores = scores.slice(0, 10);
+
+        topScoresYesterday = scores;
+
+        console.log("Yesterday's scores fetched:", scores);
+        isLoadingScores = false;
+        redraw();
+    } catch (error) {
+        console.error("Error fetching yesterday's scores:", error);
         isLoadingScores = false;
     }
 }

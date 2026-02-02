@@ -5,24 +5,14 @@
 // Achievement definitions
 const ACHIEVEMENTS = [
     {
-        id: "split_1000_once",
-        description: "Make a tile with a value of 1000+ points",
+        id: "first_3_splits_100",
+        description: "Have the first 3 splits be multiples of 100",
         type: "split"
     },
     {
-        id: "split_100_exactly_three",
-        description: "Make 3 tiles with a value of exactly 100 points",
-        type: "split"
-    },
-    {
-        id: "split_1000_five",
-        description: "Make 5 tiles with a value of 1000+ points",
-        type: "split"
-    },
-    {
-        id: "split_10_exactly_seven",
-        description: "Make 7 tiles with a value of exactly 10 points",
-        type: "split"
+        id: "bottom_row_12345",
+        description: "Make the bottom row read \"12345\"",
+        type: "special"
     },
     {
         id: "consecutive_3000_x3",
@@ -43,6 +33,31 @@ const ACHIEVEMENTS = [
         id: "no_shapes_game",
         description: "Lose a game without any shape tiles",
         type: "special"
+    },
+    {
+        id: "no_bottom_row_5000",
+        description: "Score 5000+ points without any moves\nin the bottom row",
+        type: "special"
+    },
+    {
+        id: "no_middle_column_2000",
+        description: "Score 2000+ points without any moves\nin the middle column",
+        type: "special"
+    },
+    {
+        id: "score_1000_in_1min",
+        description: "Reach 1000 points in 1 minute",
+        type: "time"
+    },
+    {
+        id: "score_2000_in_2min",
+        description: "Reach 2000 points in 2 minutes",
+        type: "time"
+    },
+    {
+        id: "score_3000_in_3min",
+        description: "Reach 3000 points in 3 minutes",
+        type: "time"
     },
 
 
@@ -274,38 +289,20 @@ function checkAchievements(eventType, data) {
     }
 }
 
-// Check for split-based achievements (tile values on 6-tiles)
+// Check for split-based achievements
 function checkSplitAchievements() {
-    if (!grid || !grid.polyominoList) return;
-    // Gather all split values for 6-tiles
-    let splits = [];
-    for (let i = 0; i < grid.w; i++) {
-        for (let j = 0; j < grid.h; j++) {
-            let box = grid[i][j];
-            if (box.n === 6 && typeof box.split === "number") {
-                splits.push(box.split);
-            }
+    if (!grid || !grid.scoreSplits) return;
+    
+    // Check if first 3 splits are multiples of 100
+    if (grid.scoreSplits.length >= 3) {
+        let firstThreeSplits = [
+            grid.scoreSplits[0],
+            grid.scoreSplits[1] - grid.scoreSplits[0],
+            grid.scoreSplits[2] - grid.scoreSplits[1]
+        ];
+        if (firstThreeSplits.every(split => split > 0 && split % 100 === 0)) {
+            unlockAchievement("first_3_splits_100");
         }
-    }
-
-    // 1. Make a tile with a value of 1000+ points
-    if (splits.some(v => v >= 1000)) {
-        unlockAchievement("split_1000_once");
-    }
-
-    // 2. Make three tiles with a value of exactly 100 points
-    if (splits.filter(v => v === 100).length >= 3) {
-        unlockAchievement("split_100_exactly_three");
-    }
-
-    // 3. Make seven tiles with a value of exactly 10 points
-    if (splits.filter(v => v === 10).length >= 7) {
-        unlockAchievement("split_10_exactly_seven");
-    }
-
-    // 4. Make five tiles with a value of 1000+ points
-    if (splits.filter(v => v >= 1000).length >= 5) {
-        unlockAchievement("split_1000_five");
     }
 }
 
@@ -349,5 +346,50 @@ function checkSpecialAchievements() {
     // Check for game over without any shape tiles
     if (grid.gameOver && grid.scoreSplits.length === 0) {
         unlockAchievement("no_shapes_game");
+    }
+    
+    // Check if bottom row reads "12345"
+    let bottomRow = [];
+    for (let i = 0; i < grid.w; i++) {
+        bottomRow.push(grid[i][0].n);
+    }
+    if (bottomRow.join('') === '12345') {
+        unlockAchievement("bottom_row_12345");
+    }
+    
+    // Check for 5000 points without using bottom row
+    if (grid.gameOver && grid.score >= 5000) {
+        let usedBottomRow = [...grid.clickedPositions].some(pos => pos.endsWith(',0'));
+        if (!usedBottomRow) {
+            unlockAchievement("no_bottom_row_5000");
+        }
+    }
+    
+    // Check for 2000 points without using middle column
+    if (grid.gameOver && grid.score >= 2000) {
+        let usedMiddleColumn = [...grid.clickedPositions].some(pos => pos.startsWith('2,'));
+        if (!usedMiddleColumn) {
+            unlockAchievement("no_middle_column_2000");
+        }
+    }
+    
+    // Check time-based achievements (only during active gameplay)
+    if (grid.firstMoveTime !== null && !grid.gameOver) {
+        let elapsed = Date.now() - grid.firstMoveTime;
+        
+        // 1000 points in 1 minute (60000ms)
+        if (grid.score >= 1000 && elapsed <= 60000) {
+            unlockAchievement("score_1000_in_1min");
+        }
+        
+        // 2000 points in 2 minutes (120000ms)
+        if (grid.score >= 2000 && elapsed <= 120000) {
+            unlockAchievement("score_2000_in_2min");
+        }
+        
+        // 3000 points in 3 minutes (180000ms)
+        if (grid.score >= 3000 && elapsed <= 180000) {
+            unlockAchievement("score_3000_in_3min");
+        }
     }
 }

@@ -4,7 +4,12 @@
 
 let showMoveCount;
 let showMenu = false;
-let currentMenuTab = "howtoplay"; // "howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"
+let currentMenuTab = "howtoplay"; // "howtoplay", "leaderboards", "achievements", "stats", "settings"
+let currentSubTab = {
+    leaderboards: "alltime", // "alltime", "yesterday", "today"
+    achievements: "score", // "score", "time", "shape", "other"
+    stats: "thisgame" // "thisgame", "personal", "global"
+};
 let menuScrollY = 0;
 let menuDragStartY = null;
 let menuDragStartScrollY = null;
@@ -17,12 +22,21 @@ let canvas; // Canvas reference for event listeners
 
 let debug = false; // Set to true to enable debug features
 
+// Settings (stored in localStorage)
+let settings = {
+    disableAnimation: false,
+    extraStat: "nothing", // "nothing", "moves", "time", "split"
+    gameOverPopup: "stats", // "nothing", "leaderboard", "stats"
+    challengeMode: "none" // "none", "bottomrow", "middlecolumn"
+};
+
+// Game over popup state
+let gameOverPopupPending = false;
+let gameOverSettledTime = null;
+
 // Discord link bounds for click detection
 let discordLinkBounds = null;
 const DISCORD_URL = "https://discord.gg/4EgJ8rjVag";
-
-// Share button bounds for click detection
-let shareButtonBounds = null;
 
 // Achievement notification
 let achievementNotification = null; // Text to display
@@ -70,10 +84,17 @@ function setup() {
     // Initialize game history
     initializeGameHistory();
 
-    // Restore last opened menu tab
+    // Initialize settings
+    initializeSettings();
+
+    // Restore last opened menu tab and subtabs
     let savedMenuTab = getItem("currentMenuTab");
-    if (savedMenuTab !== null && ["howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"].includes(savedMenuTab)) {
+    if (savedMenuTab !== null && ["howtoplay", "leaderboards", "achievements", "stats", "settings"].includes(savedMenuTab)) {
         currentMenuTab = savedMenuTab;
+    }
+    let savedSubTabs = getItem("currentSubTab");
+    if (savedSubTabs !== null) {
+        currentSubTab = { ...currentSubTab, ...savedSubTabs };
     }
 
     // Restore saved game or start new game
@@ -81,6 +102,15 @@ function setup() {
     if (autoSaveSeed !== null) {
         let moves = getItem("autoSaveMoves") || "";
         grid = new NumberGrid(w, h, autoSaveSeed, moves.split(""), true); // skipAnimation = true
+        // Restore move times
+        let savedFirstMoveTime = getItem("autoSaveFirstMoveTime");
+        if (savedFirstMoveTime !== null) {
+            grid.firstMoveTime = savedFirstMoveTime;
+        }
+        let savedLastMoveTime = getItem("autoSaveLastMoveTime");
+        if (savedLastMoveTime !== null) {
+            grid.lastMoveTime = savedLastMoveTime;
+        }
     } else {
         newGame();
     }
@@ -115,7 +145,11 @@ function draw() {
     // Draw score
     fill(over ? "white" : "black");
     if (grid.displayScore < grid.score) {
-        grid.displayScore++;
+        if (settings.disableAnimation) {
+            grid.displayScore = grid.score;
+        } else {
+            grid.displayScore++;
+        }
     }
 
 
@@ -124,37 +158,24 @@ function draw() {
 
     textSize(15);
     if (over) {
-        // Draw "Share" link
-        let shareText = "Share";
-        let shareTextW = textWidth(shareText);
-        let shareTextX = width / 2;
-        let shareTextY = 66;
-        let shareTextHeight = 15;
-        
-        // Store bounds for click detection
-        shareButtonBounds = {
-            x: shareTextX - shareTextW / 2,
-            y: shareTextY - shareTextHeight / 2,
-            width: shareTextW,
-            height: shareTextHeight + 5
-        };
-        
-        // Draw link text
+        // Game over state - show "Game Over" text
         fill(255);
         noStroke();
-        text(shareText, shareTextX, shareTextY);
-        
-        // Draw underline
-        stroke(255);
-        strokeWeight(1);
-        line(shareTextX - shareTextW / 2, shareTextY + shareTextHeight / 2 + 1, 
-             shareTextX + shareTextW / 2, shareTextY + shareTextHeight / 2 + 1);
-        noStroke();
-        strokeWeight(2);
+        text("Game Over", width / 2, 66);
     } else {
-        shareButtonBounds = null;
-        if (grid.scoreSplits.length > 0) {
-            text(grid.displaySplit, width / 2, 66);
+        // Game in progress - show extra stat if configured
+        if (settings.extraStat !== "nothing") {
+            fill(0);
+            noStroke();
+            let extraStatText = "";
+            if (settings.extraStat === "moves") {
+                extraStatText = grid.moves.length + " moves";
+            } else if (settings.extraStat === "time") {
+                extraStatText = formatTime(grid.firstMoveTime !== null ? Date.now() - grid.firstMoveTime : 0);
+            } else if (settings.extraStat === "split") {
+                extraStatText = grid.displaySplit.toString();
+            }
+            text(extraStatText, width / 2, 66);
         }
     }
 
@@ -168,19 +189,26 @@ function draw() {
                 alpha = 255 * (1 - (elapsed - (ACHIEVEMENT_NOTIFICATION_DURATION - 500)) / 500);
             }
 
+            // Split text into lines for multiline support
+            let lines = achievementNotification.split('\n');
+            let lineHeight = 16;
+            let notificationY = 66; // Same Y as score split / game over message
+            let maxLineWidth = Math.max(...lines.map(line => line.length)) * 8; // Approximate width
+            let padding = 8;
+            let boxHeight = lines.length * lineHeight + padding;
+
             // Draw black background
             fill(0, 0, 0, alpha * 0.8);
             noStroke();
-            let notificationY = 66; // Same Y as score split / game over message
-            let textWidth = achievementNotification.length * 8; // Approximate width
-            let padding = 8;
-            let boxHeight = 20;
-            rect(width / 2 - textWidth / 2 - padding, notificationY - boxHeight / 2, textWidth + padding * 2, boxHeight, 4);
+            rect(width / 2 - maxLineWidth / 2 - padding, notificationY - boxHeight / 2, maxLineWidth + padding * 2, boxHeight, 4);
 
-            // Draw text
+            // Draw text lines
             fill(255, 215, 0, alpha); // Gold color with fade
             textSize(14);
-            text(achievementNotification, width / 2, notificationY);
+            for (let i = 0; i < lines.length; i++) {
+                let lineY = notificationY + (i - (lines.length - 1) / 2) * lineHeight;
+                text(lines[i], width / 2, lineY);
+            }
         } else {
             achievementNotification = null;
         }
@@ -252,7 +280,43 @@ function draw() {
         drawMenuPanel();
     }
 
-    if (grid.settled && grid.displayScore == grid.score && achievementNotification === null && !resetConfirmPending) {
+    // Keep loop running if: animation in progress, score animating, notification showing, reset pending, or time clock displayed
+    let needsContinuousLoop = !grid.settled || grid.displayScore !== grid.score || achievementNotification !== null || resetConfirmPending;
+    
+    // Also keep loop running if time is being displayed (for live clock updates)
+    if (!grid.gameOver && settings.extraStat === "time" && grid.firstMoveTime !== null) {
+        needsContinuousLoop = true;
+    }
+    
+    // Keep loop running if stats menu is open showing "This Game" tab (for live time)
+    if (showMenu && currentMenuTab === "stats" && currentSubTab.stats === "thisgame" && !grid.gameOver) {
+        needsContinuousLoop = true;
+    }
+    
+    // Handle delayed game over popup
+    if (gameOverPopupPending) {
+        if (grid.settled && gameOverSettledTime === null) {
+            gameOverSettledTime = Date.now();
+        }
+        if (gameOverSettledTime !== null && Date.now() - gameOverSettledTime >= 1000) {
+            gameOverPopupPending = false;
+            gameOverSettledTime = null;
+            if (settings.gameOverPopup === "stats") {
+                showMenu = true;
+                currentMenuTab = "stats";
+                currentSubTab.stats = "thisgame";
+                menuScrollY = 0;
+            } else if (settings.gameOverPopup === "leaderboard") {
+                showMenu = true;
+                currentMenuTab = "leaderboards";
+                menuScrollY = 0;
+                handleTabSwitch("leaderboards");
+            }
+        }
+        needsContinuousLoop = true;
+    }
+    
+    if (!needsContinuousLoop) {
         noLoop();
     }
 
@@ -260,8 +324,112 @@ function draw() {
 }
 
 // ============================================================================
+// Utility Functions
+// ============================================================================
+
+function formatTime(ms) {
+    let totalSeconds = Math.floor(ms / 1000);
+    let hours = Math.floor(totalSeconds / 3600);
+    let minutes = Math.floor((totalSeconds % 3600) / 60);
+    let seconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+        return hours + ":" + String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
+    } else {
+        return String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
+    }
+}
+
+// ============================================================================
 // UI Rendering Functions
 // ============================================================================
+
+function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
+    let contentY = contentStartY + 20;
+    let lineHeight = 30;
+
+    // Number of moves
+    textSize(16);
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Moves:", panelX + 20, contentY);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(grid.moves.length, panelX + panelWidth - 20, contentY);
+    contentY += lineHeight;
+
+    // Time taken
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Time:", panelX + 20, contentY);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    if (grid.firstMoveTime !== null) {
+        let endTime = grid.gameOver ? (grid.lastMoveTime || grid.firstMoveTime) : Date.now();
+        let totalMs = endTime - grid.firstMoveTime;
+        text(formatTime(totalMs), panelX + panelWidth - 20, contentY);
+    } else {
+        text("-", panelX + panelWidth - 20, contentY);
+    }
+    contentY += lineHeight;
+
+    // Score splits section - only show if there are splits
+    if (grid.scoreSplits.length > 0) {
+        contentY += 10;
+        textAlign(LEFT, CENTER);
+        fill(255);
+        textSize(18);
+        text("Score splits:", panelX + 20, contentY);
+        contentY += lineHeight;
+        // Calculate individual split values
+        let splitValues = [];
+        for (let i = 0; i < grid.scoreSplits.length; i++) {
+            if (i === 0) {
+                splitValues.push(grid.scoreSplits[0]);
+            } else {
+                splitValues.push(grid.scoreSplits[i] - grid.scoreSplits[i - 1]);
+            }
+        }
+        // Add the final segment (remaining score after last split)
+        let lastSplit = grid.scoreSplits[grid.scoreSplits.length - 1] || 0;
+        if (grid.score > lastSplit) {
+            splitValues.push(grid.score - lastSplit);
+        }
+
+        // Draw the score splits bar
+        let barX = panelX + 20;
+        let barWidth = panelWidth - 40;
+        let barHeight = 30;
+        let barY = contentY;
+
+        // Colors for split segments (alternate between box colors 4 and 5)
+        let splitColors = [boxColors[1], boxColors[4]];
+
+        // Draw each segment
+        let currentX = barX;
+        let totalScore = grid.score > 0 ? grid.score : 1;
+        for (let i = 0; i < splitValues.length; i++) {
+            let segmentWidth = (splitValues[i] / totalScore) * barWidth;
+            fill(splitColors[i % splitColors.length]);
+            noStroke();
+            rect(currentX, barY, segmentWidth, barHeight);
+            
+            // Draw split value on segment if it fits
+            let splitLabel = splitValues[i].toString();
+            textSize(13);
+            let labelWidth = textWidth(splitLabel);
+            if (labelWidth + 6 < segmentWidth) {
+                fill(255);
+                textAlign(CENTER, CENTER);
+                text(splitLabel, currentX + segmentWidth / 2, barY + barHeight / 2);
+            }
+            
+            currentX += segmentWidth;
+        }
+    }
+
+    textAlign(CENTER, CENTER);
+}
 
 function drawMenuPanel() {
     // Semi-transparent background
@@ -274,21 +442,17 @@ function drawMenuPanel() {
     rect(panelX, panelY, panelWidth, panelHeight);
     noStroke();
 
-    // Draw tabs
+    // Draw main tabs
     let tabY = 110;
     let tabHeight = 35;
-    let tabWidth = panelWidth / 7;
-
-    // Tab icons and backgrounds
     let tabs = [
         { id: "howtoplay", icon: "❓", title: "How to Play" },
-        { id: "daily", icon: "📅", title: "Today's Top 10" },
-        { id: "alltime", icon: "🌍", title: "All-Time Top 10" },
+        { id: "leaderboards", icon: "🏆", title: "Leaderboards" },
         { id: "achievements", icon: "⭐", title: "Achievements" },
-        { id: "shapes", icon: "🔷", title: "Shape Tasks" },
-        { id: "statistics", icon: "📊", title: "Statistics" },
-        { id: "history", icon: "📜", title: "Game History" }
+        { id: "stats", icon: "📊", title: "Stats" },
+        { id: "settings", icon: "⚙️", title: "Settings" }
     ];
+    let tabWidth = panelWidth / tabs.length;
 
     for (let i = 0; i < tabs.length; i++) {
         let tab = tabs[i];
@@ -313,27 +477,81 @@ function drawMenuPanel() {
         text(tab.icon, tabX + tabWidth / 2, tabY + tabHeight / 2);
     }
 
-    // Draw title for current tab
-    fill(255);
-    textSize(18);
-    textAlign(CENTER, CENTER);
+    // Draw title and subtabs for current tab
     let currentTab = tabs.find(t => t.id === currentMenuTab);
-    text(currentTab.title, width / 2, tabY + tabHeight + 18);
+    let subTabY = tabY + tabHeight + 5;
+    let subTabHeight = 28;
+    let contentStartY = subTabY + 35;
+
+    // Draw subtabs if applicable
+    let subtabs = null;
+    if (currentMenuTab === "leaderboards") {
+        subtabs = [
+            { id: "alltime", label: "All-Time" },
+            { id: "yesterday", label: "Yesterday" },
+            { id: "today", label: "Today" }
+        ];
+    } else if (currentMenuTab === "achievements") {
+        subtabs = [
+            { id: "score", label: "Score" },
+            { id: "time", label: "Time" },
+            { id: "shape", label: "Shape" },
+            { id: "other", label: "Other" }
+        ];
+    } else if (currentMenuTab === "stats") {
+        subtabs = [
+            { id: "thisgame", label: "This Game" },
+            { id: "personal", label: "Personal" },
+            { id: "global", label: "Global" }
+        ];
+    }
+
+    if (subtabs) {
+        let subTabWidth = (panelWidth - 20) / subtabs.length;
+        for (let i = 0; i < subtabs.length; i++) {
+            let subtab = subtabs[i];
+            let subTabX = panelX + 10 + i * subTabWidth;
+            let isActive = currentSubTab[currentMenuTab] === subtab.id;
+
+            // Subtab background
+            fill(isActive ? 80 : 40);
+            rect(subTabX, subTabY, subTabWidth, subTabHeight, 4);
+
+            // Subtab text
+            fill(isActive ? 255 : 150);
+            textSize(14);
+            textAlign(CENTER, CENTER);
+            text(subtab.label, subTabX + subTabWidth / 2, subTabY + subTabHeight / 2);
+        }
+        contentStartY = subTabY + subTabHeight + 10;
+    } else {
+        // Draw title for tabs without subtabs
+        fill(255);
+        textSize(18);
+        textAlign(CENTER, CENTER);
+        text(currentTab.title, width / 2, subTabY + 12);
+        contentStartY = subTabY + 30;
+    }
 
     // Content area
-    let contentStartY = tabY + tabHeight + 35;
     let contentHeight = panelHeight - (contentStartY - panelY);
 
     if (currentMenuTab === "howtoplay") {
         drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight);
-    } else if (currentMenuTab === "daily" || currentMenuTab === "alltime") {
+    } else if (currentMenuTab === "leaderboards") {
         drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight);
-    } else if (currentMenuTab === "statistics") {
-        drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight);
-    } else if (currentMenuTab === "history") {
-        drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight);
-    } else {
+    } else if (currentMenuTab === "achievements") {
         drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight);
+    } else if (currentMenuTab === "stats") {
+        if (currentSubTab.stats === "thisgame") {
+            drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight);
+        } else if (currentSubTab.stats === "personal") {
+            drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeight);
+        } else {
+            drawGlobalStatsContent(panelX, contentStartY, panelWidth, contentHeight);
+        }
+    } else if (currentMenuTab === "settings") {
+        drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight);
     }
 }
 
@@ -416,8 +634,20 @@ function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) 
 }
 
 function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight) {
-    let isAllTime = (currentMenuTab === "alltime");
-    let topScores = isAllTime ? topScoresAllTime : topScoresDaily;
+    let subTab = currentSubTab.leaderboards;
+    let topScores;
+    let emptyMessage;
+    
+    if (subTab === "alltime") {
+        topScores = topScoresAllTime;
+        emptyMessage = "No scores yet.";
+    } else if (subTab === "yesterday") {
+        topScores = topScoresYesterday || [];
+        emptyMessage = "No scores from yesterday.";
+    } else {
+        topScores = topScoresDaily;
+        emptyMessage = "No scores yet today.";
+    }
 
     if (topScores.length === 0 && isLoadingScores) {
         textSize(18);
@@ -428,7 +658,7 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
         textSize(18);
         fill(200);
         textAlign(CENTER, CENTER);
-        text(isAllTime ? "No scores yet." : "No scores yet today.", width / 2, contentStartY + contentHeight / 2);
+        text(emptyMessage, width / 2, contentStartY + contentHeight / 2);
     } else {
         textSize(16);
         textAlign(LEFT, CENTER);
@@ -456,14 +686,14 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
     fill(180);
     textSize(16);
     textAlign(RIGHT, CENTER);
-    text("✏️ Edit Name", width - 35, contentStartY + contentHeight - 20);
+    text("✏️ Edit name", width - 35, contentStartY + contentHeight - 20);
 
     textAlign(CENTER, CENTER);
 }
 
-function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight) {
+function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeight) {
     // Calculate total content height
-    let totalHeight = 30 + 35 + 35 + 20 + 35 + 35 + 20 + 35 + 40 + 35 + 35 + 35 + 20; // Personal stats + chains + games + global stats
+    let totalHeight = 30 + 35 + 35 + 20 + 35 + 35 + 20 + 35 + 200; // Stats + chains + games + history graph
 
     // Clamp scroll position
     let maxScroll = Math.max(0, totalHeight - contentHeight);
@@ -480,8 +710,8 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     fill(255);
     textSize(16);
 
-    let y = contentStartY + 30 - menuScrollY;
-    let lineHeight = 35;
+    let y = contentStartY + 20 - menuScrollY;
+    let lineHeight = 30;
 
     // Personal Highest Score
     text("Highest score:", panelX + 20, y);
@@ -497,67 +727,128 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
     text(statistics.personalWorst != null ? statistics.personalWorst : "-", panelX + panelWidth - 20, y);
-    y += lineHeight + 20;
+    y += lineHeight;
+
+    // Total Games Played
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Games played:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(statistics.gamesPlayed, panelX + panelWidth - 20, y);
+    y += lineHeight + 15;
 
     // Largest Chains header
     textAlign(LEFT, CENTER);
     fill(255);
-    textSize(18);
-    text("Largest Chains:", panelX + 20, y);
+    textSize(16);
+    text("Largest chains:", panelX + 20, y);
     y += lineHeight;
 
     // Display all tile types on one row - centered
     textSize(16);
-    let totalTileWidth = 5 * 24 + 4 * 40 + 16; // 5 tiles (24px each) + 4 gaps (40px each for "×" and number)
-    let startX = panelX + (panelWidth - totalTileWidth) / 2; // Center the tiles
+    let totalTileWidth = 5 * 24 + 4 * 40 + 16;
+    let startX = panelX + (panelWidth - totalTileWidth) / 2;
 
     for (let tileType = 1; tileType <= 5; tileType++) {
         let tileX = startX + (tileType - 1) * (24 + 40);
 
-        // Draw colored box
         fill(boxColors[tileType]);
         noStroke();
         rect(tileX, y - 12, 24, 24);
 
-        // Draw tile number (shifted down by 1px)
         fill(255, 230);
         textSize(18);
         textAlign(CENTER, CENTER);
         text(tileType, tileX + 12, y + 1);
 
-        // Draw "×" and chain size
         textAlign(LEFT, CENTER);
         fill(255);
         textSize(16);
         text("×" + statistics.largestChains[tileType], tileX + 28, y);
     }
 
-    y += lineHeight;
-
-    y += 20;
-
-    // Total Games Played
-    textAlign(LEFT, CENTER);
-    fill(255);
-    text("Games Played:", panelX + 20, y);
-    textAlign(RIGHT, CENTER);
-    fill(255, 215, 0);
-    text(statistics.gamesPlayed, panelX + panelWidth - 20, y);
-
     y += lineHeight + 20;
 
-    // Global Statistics header
+    // Game History Graph - only show if at least 3 scores
+    if (gameHistory.length >= 3) {
+        textAlign(LEFT, CENTER);
+        fill(255);
+        textSize(16);
+        text("Recent scores:", panelX + 20, y);
+        y += 25;
+
+        let labelSpace = 15; // Space for score labels above bars
+        let graphHeight = 105;
+        let graphWidth = panelWidth - 40;
+        let graphX = panelX + 20;
+        let graphY = y + labelSpace;
+
+        let maxScore = Math.max(...gameHistory);
+        let maxYValue = Math.ceil(maxScore / 1000) * 1000;
+        if (maxYValue === 0) maxYValue = 1000;
+
+        // Draw grid lines
+        stroke(60);
+        strokeWeight(1);
+        for (let i = 0; i <= 4; i++) {
+            let lineY = graphY + graphHeight - (i / 4) * graphHeight;
+            line(graphX, lineY, graphX + graphWidth, lineY);
+        }
+
+        // Draw bars
+        let barWidth = graphWidth / gameHistory.length;
+        let barPadding = barWidth * 0.2;
+
+        noStroke();
+        for (let i = 0; i < gameHistory.length; i++) {
+            let score = gameHistory[gameHistory.length - 1 - i];
+            let barHeight = (score / maxYValue) * graphHeight;
+            let barX = graphX + i * barWidth + barPadding / 2;
+            let barY = graphY + graphHeight - barHeight;
+
+            // Draw bars in white
+            fill(255);
+            rect(barX, barY, barWidth - barPadding, barHeight);
+            
+            // Draw score label above bar (if it fits in view)
+            if (barY - 10 >= graphY - 15) {
+                fill(255);
+                textSize(10);
+                textAlign(CENTER, CENTER);
+                text(score, barX + (barWidth - barPadding) / 2, barY - 10);
+            }
+        }
+
+        stroke(150);
+        strokeWeight(2);
+        line(graphX, graphY + graphHeight, graphX + graphWidth, graphY + graphHeight);
+        noStroke();
+    }
+
+    drawingContext.restore();
+    pop();
+
+    // Draw scroll indicator if needed
+    if (maxScroll > 0) {
+        fill(100);
+        let scrollBarHeight = (contentHeight / totalHeight) * contentHeight;
+        let scrollBarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollBarHeight);
+        rect(panelX + panelWidth - 8, scrollBarY, 4, scrollBarHeight, 2);
+    }
+
+    textAlign(CENTER, CENTER);
+}
+
+function drawGlobalStatsContent(panelX, contentStartY, panelWidth, contentHeight) {
     textAlign(LEFT, CENTER);
     fill(255);
-    textSize(18);
-    text("Global Statistics:", panelX + 20, y);
-    y += lineHeight;
-
     textSize(16);
 
+    let y = contentStartY + 20;
+    let lineHeight = 30;
+
     // Games Played Today (Global)
-    textAlign(LEFT, CENTER);
-    fill(255);
     text("Games today:", panelX + 20, y);
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
@@ -580,17 +871,6 @@ function drawStatisticsContent(panelX, contentStartY, panelWidth, contentHeight)
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
     text(globalStats.isLoading ? "..." : globalStats.allTimeGames, panelX + panelWidth - 20, y);
-
-    drawingContext.restore();
-    pop();
-
-    // Draw scroll indicator if needed
-    if (maxScroll > 0) {
-        fill(100);
-        let scrollBarHeight = (contentHeight / totalHeight) * contentHeight;
-        let scrollBarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollBarHeight);
-        rect(panelX + panelWidth - 8, scrollBarY, 4, scrollBarHeight, 2);
-    }
 
     textAlign(CENTER, CENTER);
 }
@@ -625,7 +905,7 @@ function drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight
     fill(255);
     textSize(16);
     textAlign(CENTER, CENTER);
-    text("Last " + gameHistory.length + " Scores", width / 2, contentStartY + 15);
+    text("Last " + gameHistory.length + " Scores", width / 2, contentStartY + 20);
 
     // Draw Y-axis grid lines (no labels)
     stroke(60);
@@ -649,12 +929,8 @@ function drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight
         let barX = graphX + i * barWidth + barPadding / 2;
         let barY = graphY + graphHeight - barHeight;
 
-        // Draw bars in white (or gold for personal best)
-        if (score === statistics.personalBest && score > 0) {
-            fill(255, 215, 0);
-        } else {
-            fill(255);
-        }
+        // Draw bars in white
+        fill(255);
 
         rect(barX, barY, barWidth - barPadding, barHeight);
 
@@ -675,19 +951,27 @@ function drawGameHistoryContent(panelX, contentStartY, panelWidth, contentHeight
 }
 
 function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight) {
-    // Filter achievements by current tab
+    // Filter achievements by current subtab
+    let subTab = currentSubTab.achievements;
     let filteredAchievements = ACHIEVEMENTS.filter(achievement => {
-        if (currentMenuTab === "shapes") {
+        if (subTab === "shape") {
             return achievement.type === "shapes";
+        } else if (subTab === "score") {
+            return achievement.type === "split" || achievement.type === "consecutive";
+        } else if (subTab === "time") {
+            return achievement.type === "time";
         } else {
-            return achievement.type !== "shapes";
+            // "other" - includes special and any other types
+            return achievement.type === "special" || (achievement.type !== "shapes" && achievement.type !== "split" && achievement.type !== "consecutive" && achievement.type !== "time");
         }
     });
+
+    let isShapeTab = (subTab === "shape");
 
     // Calculate total content height
     let totalHeight = 10;
     for (let achievement of filteredAchievements) {
-        if (currentMenuTab === "shapes") {
+        if (isShapeTab && achievement.shapes) {
             // Shapes tab: title + shapes
             let itemHeight = 25; // title
             let numShapes = achievement.shapes.length;
@@ -695,7 +979,7 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
             itemHeight += 25 + (numRows * 52) + 15; // shapes area with new spacing
             totalHeight += itemHeight;
         } else {
-            // Achievements tab: just description
+            // Other tabs: just description
             totalHeight += 30; // description line
         }
     }
@@ -715,40 +999,53 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
     textAlign(LEFT, CENTER);
     let y = contentStartY + 10 - menuScrollY;
 
+    if (filteredAchievements.length === 0) {
+        fill(150);
+        textSize(16);
+        textAlign(CENTER, CENTER);
+        text("No achievements in this category", width / 2, contentStartY + contentHeight / 2);
+    }
+
     for (let achievement of filteredAchievements) {
         let data = achievementData[achievement.id];
 
         // Skip if completely out of view
         if (y > contentStartY + contentHeight + 100 || y < contentStartY - 100) {
             let itemHeight;
-            if (currentMenuTab === "shapes") {
-                itemHeight = 25;
+            let descLines = achievement.description.split('\n');
+            let lineHeight = 20;
+            if (isShapeTab && achievement.shapes) {
+                itemHeight = descLines.length * lineHeight + 5;
                 let numShapes = achievement.shapes.length;
                 let numRows = Math.ceil(numShapes / 6);
                 itemHeight += 25 + (numRows * 52) + 15;
             } else {
-                itemHeight = 30;
+                itemHeight = descLines.length * lineHeight + 10;
             }
             y += itemHeight;
             continue;
         }
 
-        if (currentMenuTab === "shapes") {
+        if (isShapeTab && achievement.shapes) {
             // For shapes tab: show only description and shapes
             textSize(16);
+            let descLines = achievement.description.split('\n');
+            let lineHeight = 20;
             if (data.unlocked) {
                 fill(255, 215, 0);
-                text("✓ " + achievement.description, panelX + 20, y);
             } else {
                 fill(200);
-                text("○ " + achievement.description, panelX + 20, y);
+            }
+            let prefix = data.unlocked ? "✓ " : "○ ";
+            for (let i = 0; i < descLines.length; i++) {
+                text((i === 0 ? prefix : "   ") + descLines[i], panelX + 20, y + i * lineHeight);
             }
 
-            y += 25;
+            y += descLines.length * lineHeight + 5;
 
             // Draw shape requirements centered
             let shapeY = y + 15;
-            let spacing = 52; // Increased from 35 to accommodate larger shapes
+            let spacing = 52;
 
             // Use cached shape matching results
             let shapeMatched = cachedShapeMatches?.[achievement.id] || new Array(achievement.shapes.length).fill(false);
@@ -771,17 +1068,21 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
             // Calculate height based on number of rows
             y += 25 + (numRows * 52) + 15;
         } else {
-            // For achievements tab: show only checkmark and description
+            // For other tabs: show only checkmark and description
             textSize(16);
+            let descLines = achievement.description.split('\n');
+            let lineHeight = 20;
             if (data.unlocked) {
                 fill(255, 215, 0);
-                text("✓ " + achievement.description, panelX + 20, y);
             } else {
                 fill(200);
-                text("○ " + achievement.description, panelX + 20, y);
+            }
+            let prefix = data.unlocked ? "✓ " : "○ ";
+            for (let i = 0; i < descLines.length; i++) {
+                text((i === 0 ? prefix : "   ") + descLines[i], panelX + 20, y + i * lineHeight);
             }
 
-            y += 30;
+            y += descLines.length * lineHeight + 10;
         }
     }
 
@@ -826,230 +1127,146 @@ function calculateShapeMatches() {
     }
 }
 
-// ============================================================================
-// Share Score Functions
-// ============================================================================
+function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
+    let y = contentStartY + 20;
+    let lineHeight = 45;
+    let checkboxSize = 24;
 
-function drawShareVersion(gfx) {
-    // Draw a share-friendly version to the provided graphics buffer
-    // No buttons, with URL centered under score
-    
-    gfx.background(bgLight);
-    
-    // Draw the grid boxes manually to the graphics buffer
-    for (let i = 0; i < grid.w; i++) {
-        for (let j = 0; j < grid.h; j++) {
-            const box = grid[i][j];
-            if (box.y < 1) continue;
-            
-            gfx.fill(boxColors[box.n]);
-            gfx.noStroke();
-            gfx.square(box.x + 1, box.y + 1, S - 2);
-            
-            gfx.textAlign(CENTER, CENTER);
-            gfx.textSize(0.7 * S);
-            let x = box.x + S * 0.5;
-            let y = box.y + S * 0.5;
-            if (box.n < 6) {
-                gfx.fill(255, 230);
-                gfx.noStroke();
-                gfx.text(box.n, x, y + 0.05 * S);
-            } else {
-                // Draw shape
-                drawShapeTo(gfx, box.shape, x, y - 9, 9, 200);
-                // Draw split score underneath
-                gfx.fill(200);
-                gfx.textSize(15);
-                gfx.text(box.split, x, y + 26);
-            }
-        }
+    // Disable Animation setting
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("Disable animation:", panelX + 20, y);
+
+    // Draw checkbox
+    let checkboxX = panelX + panelWidth - 50;
+    stroke(255);
+    strokeWeight(2);
+    noFill();
+    rect(checkboxX, y - checkboxSize / 2, checkboxSize, checkboxSize, 4);
+
+    if (settings.disableAnimation) {
+        // Draw checkmark
+        line(checkboxX + 4, y, checkboxX + 10, y + 6);
+        line(checkboxX + 10, y + 6, checkboxX + 20, y - 6);
+    }
+    noStroke();
+
+    y += lineHeight;
+
+    // Extra stat to display setting
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("Below score, show:", panelX + 20, y);
+
+    y += 30;
+
+    // Draw toggle options
+    let options = [
+        { id: "nothing", label: "Nothing" },
+        { id: "moves", label: "Moves" },
+        { id: "time", label: "Time" },
+        { id: "split", label: "Split" }
+    ];
+
+    let optionWidth = (panelWidth - 40) / options.length;
+    for (let i = 0; i < options.length; i++) {
+        let opt = options[i];
+        let optX = panelX + 20 + i * optionWidth;
+        let isSelected = settings.extraStat === opt.id;
+
+        // Option background
+        fill(isSelected ? 80 : 40);
+        rect(optX, y - 15, optionWidth - 5, 30, 4);
+
+        // Option text
+        fill(isSelected ? 255 : 150);
+        textSize(13);
+        textAlign(CENTER, CENTER);
+        text(opt.label, optX + (optionWidth - 5) / 2, y);
     }
 
-    // Draw score bar background (game over style - black)
-    gfx.noStroke();
-    gfx.fill(0);
-    gfx.rect(1, 1, w * S - 2, S - 1);
+    y += lineHeight;
 
-    // Draw score
-    gfx.fill(255);
-    gfx.textAlign(CENTER, CENTER);
-    gfx.textSize(36);
-    gfx.text(grid.score, width / 2, 38);
+    // Game over popup setting
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("After game over, show:", panelX + 20, y);
 
-    // Draw URL centered under score
-    gfx.textSize(15);
-    gfx.text("collapse.antontobi.com", width / 2, 66);
+    y += 30;
+
+    // Draw toggle options for game over popup
+    let popupOptions = [
+        { id: "nothing", label: "Nothing" },
+        { id: "leaderboard", label: "Leaderboard" },
+        { id: "stats", label: "Stats" }
+    ];
+
+    let popupOptionWidth = (panelWidth - 40) / popupOptions.length;
+    for (let i = 0; i < popupOptions.length; i++) {
+        let opt = popupOptions[i];
+        let optX = panelX + 20 + i * popupOptionWidth;
+        let isSelected = settings.gameOverPopup === opt.id;
+
+        // Option background
+        fill(isSelected ? 80 : 40);
+        rect(optX, y - 15, popupOptionWidth - 5, 30, 4);
+
+        // Option text
+        fill(isSelected ? 255 : 150);
+        textSize(13);
+        textAlign(CENTER, CENTER);
+        text(opt.label, optX + (popupOptionWidth - 5) / 2, y);
+    }
+
+    y += lineHeight;
+
+    // Challenge mode setting
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("Challenge mode:", panelX + 20, y);
+
+    y += 30;
+
+    // Draw toggle options for challenge mode
+    let challengeOptions = [
+        { id: "none", label: "None" },
+        { id: "bottomrow", label: "Bottom Row" },
+        { id: "middlecolumn", label: "Middle Col" }
+    ];
+
+    let challengeOptionWidth = (panelWidth - 40) / challengeOptions.length;
+    for (let i = 0; i < challengeOptions.length; i++) {
+        let opt = challengeOptions[i];
+        let optX = panelX + 20 + i * challengeOptionWidth;
+        let isSelected = settings.challengeMode === opt.id;
+
+        // Option background
+        fill(isSelected ? 80 : 40);
+        rect(optX, y - 15, challengeOptionWidth - 5, 30, 4);
+
+        // Option text
+        fill(isSelected ? 255 : 150);
+        textSize(13);
+        textAlign(CENTER, CENTER);
+        text(opt.label, optX + (challengeOptionWidth - 5) / 2, y);
+    }
+
+    textAlign(CENTER, CENTER);
 }
 
-function drawShapeTo(gfx, shape, centerX, centerY, cellSize, fillColor) {
-    // Draw a shape to a graphics buffer (mirrors drawShape from game.js)
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const [cx, cy] of shape) {
-        minX = Math.min(minX, cx);
-        minY = Math.min(minY, cy);
-        maxX = Math.max(maxX, cx);
-        maxY = Math.max(maxY, cy);
-    }
-
-    const cellWidth = maxX - minX + 1;
-    const cellHeight = maxY - minY + 1;
-    const pixelWidth = cellWidth * cellSize;
-    const pixelHeight = cellHeight * cellSize;
-    const startX = centerX - Math.floor(pixelWidth / 2);
-    const startY = centerY - Math.floor(pixelHeight / 2);
-
-    gfx.noStroke();
-    gfx.fill(fillColor);
-
-    for (const [cx, cy] of shape) {
-        const xPos = startX + (cx - minX) * cellSize;
-        const yPos = startY + (cy - minY) * cellSize;
-        gfx.rect(xPos + 1, yPos + 1, cellSize - 2, cellSize - 2);
-    }
-}
-
-async function shareScore() {
-    // Fallback chain:
-    // 1. Image share (Web Share API with files)
-    // 2. Copy image to clipboard
-    // 3. Download image
-    // 4. Text share with link
-    // 5. Copy text to clipboard
-    
-    const shareText = 'I scored ' + grid.score + ' in Collapse! Play at collapse.antontobi.com';
-    
-    // Check if file sharing is supported (before async work)
-    let canShareFiles = false;
-    if (navigator.share && navigator.canShare) {
-        const testBlob = new Blob(['test'], { type: 'image/png' });
-        const testFile = new File([testBlob], 'test.png', { type: 'image/png' });
-        canShareFiles = navigator.canShare({ files: [testFile] });
-    }
-    
-    // If we can share files, generate image and share it
-    if (canShareFiles) {
-        try {
-            let shareGfx = createGraphics(width, height);
-            drawShareVersion(shareGfx);
-            let canvasElement = shareGfx.elt;
-            
-            canvasElement.toBlob(async (blob) => {
-                try {
-                    const file = new File([blob], 'collapse-score-' + grid.score + '.png', { type: 'image/png' });
-                    await navigator.share({
-                        files: [file],
-                        title: 'Collapse Score: ' + grid.score,
-                        text: 'I scored ' + grid.score + ' in Collapse!'
-                    });
-                    achievementNotification = "Shared!";
-                    achievementNotificationTime = Date.now();
-                } catch (err) {
-                    if (err.name !== 'AbortError') {
-                        console.error('Image share failed:', err);
-                        // Try fallback 2: copy image to clipboard
-                        await tryImageFallbacks(blob, shareText);
-                    }
-                }
-                shareGfx.remove();
-                loop();
-            }, 'image/png');
-            return;
-        } catch (err) {
-            console.error('Failed to generate share image:', err);
-        }
-    }
-    
-    // Can't share files - try clipboard/download/text fallbacks
-    try {
-        let shareGfx = createGraphics(width, height);
-        drawShareVersion(shareGfx);
-        let canvasElement = shareGfx.elt;
-        
-        canvasElement.toBlob(async (blob) => {
-            await tryImageFallbacks(blob, shareText);
-            shareGfx.remove();
-            loop();
-        }, 'image/png');
-    } catch (err) {
-        console.error('Failed to generate image:', err);
-        // Last resort: text fallbacks
-        await tryTextFallbacks(shareText);
-        loop();
+function initializeSettings() {
+    let savedSettings = getItem("settings");
+    if (savedSettings !== null) {
+        settings = { ...settings, ...savedSettings };
     }
 }
 
-async function tryImageFallbacks(blob, shareText) {
-    // Fallback 2: Copy image to clipboard
-    if (navigator.clipboard && navigator.clipboard.write) {
-        try {
-            const clipboardItem = new ClipboardItem({ 'image/png': blob });
-            await navigator.clipboard.write([clipboardItem]);
-            achievementNotification = "Image copied to clipboard!";
-            achievementNotificationTime = Date.now();
-            return;
-        } catch (err) {
-            console.error('Clipboard image failed:', err);
-        }
-    }
-    
-    // Fallback 3: Download image
-    try {
-        let url = URL.createObjectURL(blob);
-        let a = document.createElement('a');
-        a.href = url;
-        a.download = 'collapse-score-' + grid.score + '.png';
-        a.click();
-        URL.revokeObjectURL(url);
-        achievementNotification = "Image downloaded!";
-        achievementNotificationTime = Date.now();
-        return;
-    } catch (err) {
-        console.error('Download failed:', err);
-    }
-    
-    // Fallback 4 & 5: Text fallbacks
-    await tryTextFallbacks(shareText);
-}
-
-async function tryTextFallbacks(shareText) {
-    // Fallback 4: Text share with link
-    if (navigator.share) {
-        try {
-            await navigator.share({
-                title: 'Collapse Score: ' + grid.score,
-                text: shareText,
-                url: 'https://collapse.antontobi.com'
-            });
-            achievementNotification = "Shared!";
-            achievementNotificationTime = Date.now();
-            return;
-        } catch (err) {
-            if (err.name !== 'AbortError') {
-                console.error('Text share failed:', err);
-            } else {
-                return; // User cancelled
-            }
-        }
-    }
-    
-    // Fallback 5: Copy text to clipboard
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        try {
-            await navigator.clipboard.writeText(shareText);
-            achievementNotification = "Text copied to clipboard!";
-            achievementNotificationTime = Date.now();
-            return;
-        } catch (err) {
-            console.error('Text clipboard failed:', err);
-        }
-    }
-    
-    achievementNotification = "Unable to share";
-    achievementNotificationTime = Date.now();
+function saveSettings() {
+    storeItem("settings", settings);
 }
 
 // ============================================================================
@@ -1087,14 +1304,6 @@ function handleDocumentClick(event) {
 
 function onClick() {
     if (mouseY < 80) {
-        // Check if clicking share button (when game is over)
-        if (shareButtonBounds && 
-            mouseX >= shareButtonBounds.x && mouseX <= shareButtonBounds.x + shareButtonBounds.width &&
-            mouseY >= shareButtonBounds.y && mouseY <= shareButtonBounds.y + shareButtonBounds.height) {
-            shareScore();
-            return;
-        }
-        
         // Header area - always accessible
         if (mouseX > width - 80) {
             // Reset button (top right)
@@ -1113,37 +1322,25 @@ function onClick() {
             resetConfirmPending = false;
             // Menu toggle button (top left)
             showMenu = !showMenu;
-
-            // Fetch scores when showing leaderboard tabs
-            if (showMenu && (currentMenuTab === "daily" || currentMenuTab === "alltime")) {
-                fetchTopScores(currentMenuTab === "alltime").then(() => {
-                    loop();
-                });
-            }
-
-            // Calculate shape matches when opening menu on shapes tab
-            if (showMenu && currentMenuTab === "shapes") {
-                calculateShapeMatches();
-            }
-
-            // Refresh game history when opening menu on history tab
-            if (showMenu && currentMenuTab === "history") {
-                initializeGameHistory();
-            }
-
-            // Fetch global stats when opening menu on statistics tab
-            if (showMenu && currentMenuTab === "statistics") {
-                fetchGlobalStats().then(() => {
-                    loop();
-                });
+            
+            // Handle data fetching when opening menu
+            if (showMenu) {
+                handleTabSwitch(currentMenuTab);
             }
 
             loop();
         } else {
             resetConfirmPending = false;
-            // Click in header area between buttons - outside menu panel, close menu
+            // Click in score area (between menu and reset buttons)
             if (showMenu) {
                 showMenu = false;
+            } else {
+                // Cycle through extra stat options
+                let options = ["nothing", "moves", "time", "split"];
+                let currentIndex = options.indexOf(settings.extraStat);
+                settings.extraStat = options[(currentIndex + 1) % options.length];
+                saveSettings();
+                loop();
             }
         }
     } else {
@@ -1153,46 +1350,54 @@ function onClick() {
             if (isInsideMenuPanel(mouseX, mouseY)) {
                 // Click is inside menu panel - handle interactive elements
                 
-                // Check if clicking on tabs
+                // Check if clicking on main tabs
+                let panelX = 15;
                 let panelWidth = width - 30;
-                let tabWidth = panelWidth / 7;
+                let tabs = ["howtoplay", "leaderboards", "achievements", "stats", "settings"];
+                let tabWidth = panelWidth / tabs.length;
                 let tabY = 110;
                 let tabHeight = 35;
 
                 if (mouseY >= tabY && mouseY <= tabY + tabHeight) {
-                    let tabs = ["howtoplay", "daily", "alltime", "achievements", "shapes", "statistics", "history"];
                     for (let i = 0; i < tabs.length; i++) {
-                        let tabX = 15 + i * tabWidth;
+                        let tabX = panelX + i * tabWidth;
                         if (mouseX >= tabX && mouseX < tabX + tabWidth) {
                             if (currentMenuTab !== tabs[i]) {
                                 currentMenuTab = tabs[i];
                                 storeItem("currentMenuTab", currentMenuTab);
                                 menuScrollY = 0;
+                                handleTabSwitch(tabs[i]);
+                                loop();
+                            }
+                            redraw();
+                            return;
+                        }
+                    }
+                }
 
-                                // Fetch scores when switching to leaderboard tab
-                                if (tabs[i] === "daily" || tabs[i] === "alltime") {
-                                    fetchTopScores(tabs[i] === "alltime").then(() => {
-                                        loop();
-                                    });
-                                }
+                // Check if clicking on subtabs
+                let subTabY = tabY + tabHeight + 5;
+                let subTabHeight = 28;
+                let subtabs = null;
 
-                                // Calculate shape matches when switching to shapes tab
-                                if (tabs[i] === "shapes") {
-                                    calculateShapeMatches();
-                                }
+                if (currentMenuTab === "leaderboards") {
+                    subtabs = ["alltime", "yesterday", "today"];
+                } else if (currentMenuTab === "achievements") {
+                    subtabs = ["score", "time", "shape", "other"];
+                } else if (currentMenuTab === "stats") {
+                    subtabs = ["thisgame", "personal", "global"];
+                }
 
-                                // Refresh game history when switching to history tab
-                                if (tabs[i] === "history") {
-                                    initializeGameHistory();
-                                }
-
-                                // Fetch global stats when switching to statistics tab
-                                if (tabs[i] === "statistics") {
-                                    fetchGlobalStats().then(() => {
-                                        loop();
-                                    });
-                                }
-
+                if (subtabs && mouseY >= subTabY && mouseY <= subTabY + subTabHeight) {
+                    let subTabWidth = (panelWidth - 20) / subtabs.length;
+                    for (let i = 0; i < subtabs.length; i++) {
+                        let subTabX = panelX + 10 + i * subTabWidth;
+                        if (mouseX >= subTabX && mouseX < subTabX + subTabWidth) {
+                            if (currentSubTab[currentMenuTab] !== subtabs[i]) {
+                                currentSubTab[currentMenuTab] = subtabs[i];
+                                storeItem("currentSubTab", currentSubTab);
+                                menuScrollY = 0;
+                                handleSubTabSwitch(currentMenuTab, subtabs[i]);
                                 loop();
                             }
                             redraw();
@@ -1211,8 +1416,8 @@ function onClick() {
                 }
 
                 // Check if clicking edit name button on leaderboard
-                if ((currentMenuTab === "daily" || currentMenuTab === "alltime")) {
-                    let contentStartY = 110 + 35 + 35; // tabY + tabHeight + title
+                if (currentMenuTab === "leaderboards") {
+                    let contentStartY = 110 + 35 + 28 + 10; // tabY + tabHeight + subTabHeight + padding
                     let contentHeight = (height - 110) - (contentStartY - 95);
                     let editButtonY = contentStartY + contentHeight - 20;
 
@@ -1223,8 +1428,75 @@ function onClick() {
                     }
                 }
 
+                // Check if clicking settings checkboxes/options
+                if (currentMenuTab === "settings") {
+                    let contentStartY = 110 + 35 + 30; // tabY + tabHeight + title space
+                    let y = contentStartY + 20;
+                    let checkboxX = panelX + panelWidth - 50;
+                    let checkboxSize = 24;
+                    let lineHeight = 45;
+
+                    // Disable animation checkbox
+                    if (mouseY >= y - checkboxSize / 2 && mouseY <= y + checkboxSize / 2 &&
+                        mouseX >= checkboxX && mouseX <= checkboxX + checkboxSize) {
+                        settings.disableAnimation = !settings.disableAnimation;
+                        saveSettings();
+                        redraw();
+                        return;
+                    }
+
+                    y += lineHeight + 30; // lineHeight + label spacing
+
+                    // Extra stat options
+                    let options = ["nothing", "moves", "time", "split"];
+                    let optionWidth = (panelWidth - 40) / options.length;
+                    for (let i = 0; i < options.length; i++) {
+                        let optX = panelX + 20 + i * optionWidth;
+                        if (mouseX >= optX && mouseX <= optX + optionWidth - 5 &&
+                            mouseY >= y - 15 && mouseY <= y + 15) {
+                            settings.extraStat = options[i];
+                            saveSettings();
+                            redraw();
+                            return;
+                        }
+                    }
+
+                    y += lineHeight + 30; // lineHeight + label spacing
+
+                    // Game over popup options
+                    let popupOptions = ["nothing", "leaderboard", "stats"];
+                    let popupOptionWidth = (panelWidth - 40) / popupOptions.length;
+                    for (let i = 0; i < popupOptions.length; i++) {
+                        let optX = panelX + 20 + i * popupOptionWidth;
+                        if (mouseX >= optX && mouseX <= optX + popupOptionWidth - 5 &&
+                            mouseY >= y - 15 && mouseY <= y + 15) {
+                            settings.gameOverPopup = popupOptions[i];
+                            saveSettings();
+                            redraw();
+                            return;
+                        }
+                    }
+
+                    y += lineHeight + 30; // lineHeight + label spacing
+
+                    // Challenge mode options
+                    let challengeOptions = ["none", "bottomrow", "middlecolumn"];
+                    let challengeOptionWidth = (panelWidth - 40) / challengeOptions.length;
+                    for (let i = 0; i < challengeOptions.length; i++) {
+                        let optX = panelX + 20 + i * challengeOptionWidth;
+                        if (mouseX >= optX && mouseX <= optX + challengeOptionWidth - 5 &&
+                            mouseY >= y - 15 && mouseY <= y + 15) {
+                            settings.challengeMode = challengeOptions[i];
+                            saveSettings();
+                            redraw();
+                            return;
+                        }
+                    }
+                }
+
                 // Handle drag scrolling for scrollable tabs
-                if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") {
+                if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || 
+                    (currentMenuTab === "stats" && currentSubTab.stats === "personal")) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
                 }
@@ -1243,16 +1515,48 @@ function onClick() {
     redraw();
 }
 
+function handleTabSwitch(tabId) {
+    // Handle data fetching when switching to a tab
+    if (tabId === "leaderboards") {
+        fetchLeaderboardData(currentSubTab.leaderboards);
+    } else if (tabId === "achievements" && currentSubTab.achievements === "shape") {
+        calculateShapeMatches();
+    } else if (tabId === "stats") {
+        if (currentSubTab.stats === "personal") {
+            initializeGameHistory();
+        } else if (currentSubTab.stats === "global") {
+            fetchGlobalStats().then(() => loop());
+        }
+    }
+}
+
+function handleSubTabSwitch(tabId, subTabId) {
+    // Handle data fetching when switching subtabs
+    if (tabId === "leaderboards") {
+        fetchLeaderboardData(subTabId);
+    } else if (tabId === "achievements" && subTabId === "shape") {
+        calculateShapeMatches();
+    } else if (tabId === "stats") {
+        if (subTabId === "personal") {
+            initializeGameHistory();
+        } else if (subTabId === "global") {
+            fetchGlobalStats().then(() => loop());
+        }
+    }
+}
+
+function fetchLeaderboardData(subTabId) {
+    if (subTabId === "alltime") {
+        fetchTopScores(true).then(() => loop());
+    } else if (subTabId === "today") {
+        fetchTopScores(false).then(() => loop());
+    } else if (subTabId === "yesterday") {
+        fetchYesterdayScores().then(() => loop());
+    }
+}
+
 function mouseMoved() {
     // Update cursor based on hover state
-    
-    // Check for share button hover
-    if (shareButtonBounds && 
-        mouseX >= shareButtonBounds.x && mouseX <= shareButtonBounds.x + shareButtonBounds.width &&
-        mouseY >= shareButtonBounds.y && mouseY <= shareButtonBounds.y + shareButtonBounds.height) {
-        cursor(HAND);
-        return;
-    }
     
     if (showMenu && currentMenuTab === "howtoplay" && discordLinkBounds) {
         if (mouseX >= discordLinkBounds.x && mouseX <= discordLinkBounds.x + discordLinkBounds.width &&
@@ -1264,9 +1568,18 @@ function mouseMoved() {
     cursor(ARROW);
 }
 
+function isScrollableTab() {
+    // Check if current tab/subtab combination is scrollable
+    return showMenu && (
+        currentMenuTab === "howtoplay" || 
+        currentMenuTab === "achievements" || 
+        (currentMenuTab === "stats" && currentSubTab.stats === "personal")
+    );
+}
+
 function mouseWheel(event) {
-    // Handle scrolling in achievement tabs
-    if (showMenu && (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics")) {
+    // Handle scrolling in scrollable tabs
+    if (isScrollableTab()) {
         menuScrollY += event.delta;
         redraw();
         return false; // Prevent default scrolling
@@ -1274,8 +1587,8 @@ function mouseWheel(event) {
 }
 
 function mouseDragged() {
-    // Handle drag scrolling in achievement tabs
-    if (showMenu && (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
+    // Handle drag scrolling in scrollable tabs
+    if (isScrollableTab() && menuDragStartY !== null) {
         let deltaY = menuDragStartY - mouseY;
         menuScrollY = menuDragStartScrollY + deltaY;
         redraw();
@@ -1284,8 +1597,8 @@ function mouseDragged() {
 }
 
 function touchMoved() {
-    // Handle touch scrolling in achievement tabs (for p5.js touch events)
-    if (showMenu && (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") && menuDragStartY !== null) {
+    // Handle touch scrolling in scrollable tabs (for p5.js touch events)
+    if (isScrollableTab() && menuDragStartY !== null) {
         // Use touches array if available, otherwise fall back to mouseY
         let currentY = touches.length > 0 ? touches[0].y : mouseY;
         let deltaY = menuDragStartY - currentY;
@@ -1338,9 +1651,8 @@ function handleTouchStart(event) {
     let rect = canvas.elt.getBoundingClientRect();
     let touchY = touch.clientY - rect.top;
 
-    // Only handle scrolling for achievement/shapes/statistics tabs in the scrollable area
-    if ((currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || currentMenuTab === "shapes" || currentMenuTab === "statistics") &&
-        touchY >= 95 && touchY <= height - 15) {
+    // Only handle scrolling for scrollable tabs in the scrollable area
+    if (isScrollableTab() && touchY >= 95 && touchY <= height - 15) {
         menuDragStartY = touchY;
         menuDragStartScrollY = menuScrollY;
         // Don't prevent default yet - only prevent if user actually drags
@@ -1349,7 +1661,7 @@ function handleTouchStart(event) {
 
 function handleTouchMove(event) {
     if (!showMenu) return;
-    if (currentMenuTab !== "howtoplay" && currentMenuTab !== "achievements" && currentMenuTab !== "shapes" && currentMenuTab !== "statistics") return;
+    if (!isScrollableTab()) return;
     if (menuDragStartY === null) return;
 
     let touch = event.touches[0];
