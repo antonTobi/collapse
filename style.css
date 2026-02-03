@@ -1,5 +1,6 @@
 html, body {
   height: 100%;
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 body {
@@ -7,4 +8,8 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+canvas {
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }

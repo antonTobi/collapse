@@ -6,9 +6,9 @@ let showMoveCount;
 let showMenu = false;
 let currentMenuTab = "howtoplay"; // "howtoplay", "leaderboards", "achievements", "stats", "settings"
 let currentSubTab = {
-    leaderboards: "alltime", // "alltime", "yesterday", "today"
+    leaderboards: "today", // "alltime", "yesterday", "today"
     achievements: "score", // "score", "time", "shape", "other"
-    stats: "thisgame" // "thisgame", "personal", "global"
+    stats: "personal" // "thisgame", "personal", "global"
 };
 let menuScrollY = 0;
 let menuDragStartY = null;
@@ -25,8 +25,9 @@ let debug = false; // Set to true to enable debug features
 // Settings (stored in localStorage)
 let settings = {
     disableAnimation: false,
+    showShapes: false,
     extraStat: "nothing", // "nothing", "moves", "time", "split"
-    gameOverPopup: "stats", // "nothing", "leaderboard", "stats"
+    gameOverPopup: "leaderboard", // "nothing", "leaderboard", "stats"
     challengeMode: "none" // "none", "bottomrow", "middlecolumn"
 };
 
@@ -75,6 +76,7 @@ function setup() {
     document.addEventListener('click', handleDocumentClick);
 
     textAlign(CENTER, CENTER);
+    textFont('Roboto');
     strokeWeight(2);
 
     // Initialize Firebase authentication
@@ -351,7 +353,7 @@ function formatTime(ms) {
     let seconds = totalSeconds % 60;
 
     if (hours > 0) {
-        return hours + "h" + String(minutes).padStart(2, '0') + "m";
+        return hours + "h " + String(minutes).padStart(2, '0') + "m";
     } else {
         return String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
     }
@@ -575,8 +577,8 @@ function drawMenuPanel() {
 function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) {
     let lines = [
         "• Click a group of matching tiles to collapse",
-        "  them into a single box with a higher value.",
-        "• Collapsing a group of 5's creates a shape",
+        "  them into a single tile with a higher value.",
+        `• Collapsing a group of 5's creates a ${settings.showShapes ? "shape" : "blank"}`,
         "  tile, which cannot be further collapsed.",
         "• The game ends when no more moves are",
         "  possible!",
@@ -1232,9 +1234,26 @@ function calculateShapeMatches() {
 }
 
 function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
-    let y = contentStartY + 20;
     let lineHeight = 45;
     let checkboxSize = 24;
+    
+    // Calculate total content height
+    // 2 checkboxes (45 each) + 3 toggle groups (45 + 30 each = 75 each) + padding
+    let totalHeight = 20 + lineHeight * 2 + (lineHeight + 30) * 3 + 20;
+    
+    // Clamp scroll position
+    let maxScroll = Math.max(0, totalHeight - contentHeight);
+    menuScrollY = Math.max(0, Math.min(menuScrollY, maxScroll));
+    
+    // Clip to content area
+    push();
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(panelX, contentStartY, panelWidth, contentHeight);
+    drawingContext.clip();
+    
+    let y = contentStartY + 20 - menuScrollY;
+    let checkboxX = panelX + panelWidth - 50;
 
     // Disable Animation setting
     textAlign(LEFT, CENTER);
@@ -1243,13 +1262,33 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     text("Disable animation:", panelX + 20, y);
 
     // Draw checkbox
-    let checkboxX = panelX + panelWidth - 50;
     stroke(255);
     strokeWeight(2);
     noFill();
     rect(checkboxX, y - checkboxSize / 2, checkboxSize, checkboxSize, 4);
 
     if (settings.disableAnimation) {
+        // Draw checkmark
+        line(checkboxX + 4, y, checkboxX + 10, y + 6);
+        line(checkboxX + 10, y + 6, checkboxX + 20, y - 6);
+    }
+    noStroke();
+
+    y += lineHeight;
+
+    // Show shapes setting
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("Show shapes:", panelX + 20, y);
+
+    // Draw checkbox
+    stroke(255);
+    strokeWeight(2);
+    noFill();
+    rect(checkboxX, y - checkboxSize / 2, checkboxSize, checkboxSize, 4);
+
+    if (settings.showShapes) {
         // Draw checkmark
         line(checkboxX + 4, y, checkboxX + 10, y + 6);
         line(checkboxX + 10, y + 6, checkboxX + 20, y - 6);
@@ -1357,6 +1396,21 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
         textSize(13);
         textAlign(CENTER, CENTER);
         text(opt.label, optX + (challengeOptionWidth - 5) / 2, y);
+    }
+
+    // Restore clipping
+    drawingContext.restore();
+    pop();
+    
+    // Draw scrollbar if content overflows
+    if (totalHeight > contentHeight) {
+        let scrollbarX = panelX + panelWidth - 8;
+        let scrollbarHeight = contentHeight * (contentHeight / totalHeight);
+        let scrollbarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollbarHeight);
+        
+        fill(100, 150);
+        noStroke();
+        rect(scrollbarX, scrollbarY, 4, scrollbarHeight, 2);
     }
 
     textAlign(CENTER, CENTER);
@@ -1537,72 +1591,87 @@ function onClick() {
                 // Check if clicking settings checkboxes/options
                 if (currentMenuTab === "settings") {
                     let contentStartY = 110 + 35 + 30; // tabY + tabHeight + title space
-                    let y = contentStartY + 20;
+                    let y = contentStartY + 20 - menuScrollY;
                     let checkboxX = panelX + panelWidth - 50;
                     let checkboxSize = 24;
                     let lineHeight = 45;
 
-                    // Disable animation checkbox - larger clickable area
-                    let clickPadding = 15;
-                    if (mouseY >= y - checkboxSize / 2 - clickPadding && mouseY <= y + checkboxSize / 2 + clickPadding &&
-                        mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding) {
-                        settings.disableAnimation = !settings.disableAnimation;
-                        saveSettings();
-                        redraw();
-                        return;
-                    }
-
-                    y += lineHeight + 30; // lineHeight + label spacing
-
-                    // Extra stat options
-                    let options = ["nothing", "moves", "time", "split"];
-                    let optionWidth = (panelWidth - 40) / options.length;
-                    for (let i = 0; i < options.length; i++) {
-                        let optX = panelX + 20 + i * optionWidth;
-                        if (mouseX >= optX && mouseX <= optX + optionWidth - 5 &&
-                            mouseY >= y - 15 && mouseY <= y + 15) {
-                            settings.extraStat = options[i];
+                    // Only handle clicks within content area
+                    if (mouseY >= contentStartY && mouseY <= contentStartY + (height - 110 - (contentStartY - 95))) {
+                        // Disable animation checkbox - larger clickable area
+                        let clickPadding = 15;
+                        if (mouseY >= y - checkboxSize / 2 - clickPadding && mouseY <= y + checkboxSize / 2 + clickPadding &&
+                            mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding) {
+                            settings.disableAnimation = !settings.disableAnimation;
                             saveSettings();
                             redraw();
                             return;
                         }
-                    }
 
-                    y += lineHeight + 30; // lineHeight + label spacing
+                        y += lineHeight;
 
-                    // Game over popup options
-                    let popupOptions = ["nothing", "leaderboard", "stats"];
-                    let popupOptionWidth = (panelWidth - 40) / popupOptions.length;
-                    for (let i = 0; i < popupOptions.length; i++) {
-                        let optX = panelX + 20 + i * popupOptionWidth;
-                        if (mouseX >= optX && mouseX <= optX + popupOptionWidth - 5 &&
-                            mouseY >= y - 15 && mouseY <= y + 15) {
-                            settings.gameOverPopup = popupOptions[i];
+                        // Show shapes checkbox
+                        if (mouseY >= y - checkboxSize / 2 - clickPadding && mouseY <= y + checkboxSize / 2 + clickPadding &&
+                            mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding) {
+                            settings.showShapes = !settings.showShapes;
                             saveSettings();
                             redraw();
                             return;
                         }
-                    }
 
-                    y += lineHeight + 30; // lineHeight + label spacing
+                        y += lineHeight + 30; // lineHeight + label spacing
 
-                    // Challenge mode options
-                    let challengeOptions = ["none", "bottomrow", "middlecolumn"];
-                    let challengeOptionWidth = (panelWidth - 40) / challengeOptions.length;
-                    for (let i = 0; i < challengeOptions.length; i++) {
-                        let optX = panelX + 20 + i * challengeOptionWidth;
-                        if (mouseX >= optX && mouseX <= optX + challengeOptionWidth - 5 &&
-                            mouseY >= y - 15 && mouseY <= y + 15) {
-                            settings.challengeMode = challengeOptions[i];
-                            saveSettings();
-                            redraw();
-                            return;
+                        // Extra stat options
+                        let options = ["nothing", "moves", "time", "split"];
+                        let optionWidth = (panelWidth - 40) / options.length;
+                        for (let i = 0; i < options.length; i++) {
+                            let optX = panelX + 20 + i * optionWidth;
+                            if (mouseX >= optX && mouseX <= optX + optionWidth - 5 &&
+                                mouseY >= y - 15 && mouseY <= y + 15) {
+                                settings.extraStat = options[i];
+                                saveSettings();
+                                redraw();
+                                return;
+                            }
+                        }
+
+                        y += lineHeight + 30; // lineHeight + label spacing
+
+                        // Game over popup options
+                        let popupOptions = ["nothing", "leaderboard", "stats"];
+                        let popupOptionWidth = (panelWidth - 40) / popupOptions.length;
+                        for (let i = 0; i < popupOptions.length; i++) {
+                            let optX = panelX + 20 + i * popupOptionWidth;
+                            if (mouseX >= optX && mouseX <= optX + popupOptionWidth - 5 &&
+                                mouseY >= y - 15 && mouseY <= y + 15) {
+                                settings.gameOverPopup = popupOptions[i];
+                                saveSettings();
+                                redraw();
+                                return;
+                            }
+                        }
+
+                        y += lineHeight + 30; // lineHeight + label spacing
+
+                        // Challenge mode options
+                        let challengeOptions = ["none", "bottomrow", "middlecolumn"];
+                        let challengeOptionWidth = (panelWidth - 40) / challengeOptions.length;
+                        for (let i = 0; i < challengeOptions.length; i++) {
+                            let optX = panelX + 20 + i * challengeOptionWidth;
+                            if (mouseX >= optX && mouseX <= optX + challengeOptionWidth - 5 &&
+                                mouseY >= y - 15 && mouseY <= y + 15) {
+                                settings.challengeMode = challengeOptions[i];
+                                saveSettings();
+                                redraw();
+                                return;
+                            }
                         }
                     }
                 }
 
                 // Handle drag scrolling for scrollable tabs
                 if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" ||
+                    currentMenuTab === "settings" ||
                     (currentMenuTab === "stats" && currentSubTab.stats === "personal")) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
@@ -1680,6 +1749,7 @@ function isScrollableTab() {
     return showMenu && (
         currentMenuTab === "howtoplay" ||
         currentMenuTab === "achievements" ||
+        currentMenuTab === "settings" ||
         (currentMenuTab === "stats" && currentSubTab.stats === "personal")
     );
 }

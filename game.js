@@ -16,19 +16,24 @@ class Box {
         // Check if this tile is in a locked region based on challenge mode
         let challengeMode = (typeof settings !== 'undefined') ? settings.challengeMode : "none";
         let isLocked = (challengeMode === "bottomrow" && gridJ === 0) ||
-                       (challengeMode === "middlecolumn" && gridI === 2);
+            (challengeMode === "middlecolumn" && gridI === 2);
 
         textSize(0.7 * S);
         let x = this.x + S * 0.5;
         let y = this.y + S * 0.5;
         if (this.n < 6) {
             // Draw number at 50% opacity if locked, full opacity otherwise
-            fill(255, isLocked ? 115 : 230);
-            noStroke();
-            text(this.n, x, y + 0.05 * S);
+            if (!isLocked) {
+                noStroke()
+                fill(255, 230)
+                text(this.n, x, y + 0.07 * S);
+            }
         } else {
-            // Draw shape centered in the tile
-            drawShape(this.shape, x, y, 9, 200);
+            // Draw shape centered in the tile (only if showShapes setting is enabled)
+            let showShapes = (typeof settings !== 'undefined') ? settings.showShapes : false;
+            if (showShapes) {
+                drawShape(this.shape, x, y, 9, 200);
+            }
         }
     }
 }
@@ -176,7 +181,7 @@ class NumberGrid {
             if (!this.isReplaying) {
                 this.clickedPositions.add(`${i},${j}`);
             }
-            
+
             if (this.noLegalMoves()) {
                 this.gameOver = true;
                 this.scoreSplitDiff = null;
@@ -223,7 +228,7 @@ class NumberGrid {
         this.moves.push(alphabet[5 * j + i]);
         let scoreGain = n * chain.length;
         this.score += scoreGain;
-        
+
         // Track move times (only during live gameplay)
         if (!this.isReplaying) {
             let now = Date.now();
@@ -234,7 +239,7 @@ class NumberGrid {
             this.lastMoveTime = now;
             storeItem("autoSaveLastMoveTime", now);
         }
-        
+
         // Track largest chain for this tile type (only during live gameplay)
         if (!this.isReplaying && chain.length > this.largestChains[n]) {
             this.largestChains[n] = chain.length;
@@ -335,13 +340,13 @@ class NumberGrid {
     noLegalMoves() {
         // Get challenge mode setting (if available)
         let challengeMode = (typeof settings !== 'undefined') ? settings.challengeMode : "none";
-        
+
         for (let i = 0; i < this.w; i++) {
             for (let j = 0; j < this.h; j++) {
                 // Skip blocked positions based on challenge mode
                 if (challengeMode === "bottomrow" && j === 0) continue;
                 if (challengeMode === "middlecolumn" && i === 2) continue;
-                
+
                 if (this[i][j].n < 6 && this.getChainWithCoords(i, j)[0].length > 1) {
                     return false;
                 }
@@ -371,19 +376,19 @@ function newGame() {
         window.location.reload();
         return;
     }
-    
+
     // Reset game over popup state
     if (typeof gameOverPopupPending !== 'undefined') {
         gameOverPopupPending = false;
         gameOverSettledTime = null;
     }
-    
+
     // If there's an ongoing game (not already game over), count it as completed
     if (grid && !grid.gameOver && grid.moves.length > 0) {
         updateStatistics(grid.score, grid.largestChains);
         addToGameHistory(grid.score);
     }
-    
+
     grid = new NumberGrid(w, h);
     storeItem("autoSaveSeed", grid.seed);
     removeItem("autoSaveMoves");
