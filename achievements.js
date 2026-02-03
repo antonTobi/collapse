@@ -50,13 +50,18 @@ const ACHIEVEMENTS = [
         type: "time"
     },
     {
-        id: "score_2000_in_2min",
-        description: "Reach 2000 points in 2 minutes",
+        id: "score_3000_in_3min",
+        description: "Reach 3000 points in 3 minutes",
         type: "time"
     },
     {
-        id: "score_3000_in_3min",
-        description: "Reach 3000 points in 3 minutes",
+        id: "score_5000_in_5min",
+        description: "Reach 5000 points in 5 minutes",
+        type: "time"
+    },
+    {
+        id: "score_7000_in_7min",
+        description: "Reach 7000 points in 7 minutes",
         type: "time"
     },
 
@@ -384,14 +389,19 @@ function checkSpecialAchievements() {
             unlockAchievement("score_1000_in_1min");
         }
         
-        // 2000 points in 2 minutes (120000ms)
-        if (grid.score >= 2000 && elapsed <= 120000) {
-            unlockAchievement("score_2000_in_2min");
-        }
-        
         // 3000 points in 3 minutes (180000ms)
         if (grid.score >= 3000 && elapsed <= 180000) {
             unlockAchievement("score_3000_in_3min");
+        }
+        
+        // 5000 points in 5 minutes (300000ms)
+        if (grid.score >= 5000 && elapsed <= 300000) {
+            unlockAchievement("score_5000_in_5min");
+        }
+        
+        // 7000 points in 7 minutes (420000ms)
+        if (grid.score >= 7000 && elapsed <= 420000) {
+            unlockAchievement("score_7000_in_7min");
         }
     }
 }

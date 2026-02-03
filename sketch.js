@@ -48,11 +48,19 @@ let statistics = {
     personalBest: 0,
     personalWorst: null, // null means no completed games yet
     largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-    gamesPlayed: 0
+    gamesPlayed: 0,
+    fastestTo1000: null, // in ms
+    fastestTo3000: null,
+    fastestTo5000: null,
+    fastestTo7000: null,
+    gamesOver7000: 0,
+    gamesOver8000: 0,
+    gamesOver9000: 0,
+    gamesOver10000: 0
 };
 
 // Game History
-let gameHistory = []; // Array to store last 10 scores
+let gameHistory = []; // Array to store last 7 scores
 
 function setup() {
     canvas = createCanvas(w * S, h * S + S);
@@ -95,6 +103,12 @@ function setup() {
     let savedSubTabs = getItem("currentSubTab");
     if (savedSubTabs !== null) {
         currentSubTab = { ...currentSubTab, ...savedSubTabs };
+    }
+
+    // Restore menu open state
+    let savedShowMenu = getItem("showMenu");
+    if (savedShowMenu !== null) {
+        showMenu = savedShowMenu;
     }
 
     // Restore saved game or start new game
@@ -282,17 +296,17 @@ function draw() {
 
     // Keep loop running if: animation in progress, score animating, notification showing, reset pending, or time clock displayed
     let needsContinuousLoop = !grid.settled || grid.displayScore !== grid.score || achievementNotification !== null || resetConfirmPending;
-    
+
     // Also keep loop running if time is being displayed (for live clock updates)
     if (!grid.gameOver && settings.extraStat === "time" && grid.firstMoveTime !== null) {
         needsContinuousLoop = true;
     }
-    
+
     // Keep loop running if stats menu is open showing "This Game" tab (for live time)
     if (showMenu && currentMenuTab === "stats" && currentSubTab.stats === "thisgame" && !grid.gameOver) {
         needsContinuousLoop = true;
     }
-    
+
     // Handle delayed game over popup
     if (gameOverPopupPending) {
         if (grid.settled && gameOverSettledTime === null) {
@@ -305,17 +319,20 @@ function draw() {
                 showMenu = true;
                 currentMenuTab = "stats";
                 currentSubTab.stats = "thisgame";
+                storeItem("currentSubTab", currentSubTab);
                 menuScrollY = 0;
             } else if (settings.gameOverPopup === "leaderboard") {
                 showMenu = true;
                 currentMenuTab = "leaderboards";
+                currentSubTab.leaderboards = "today";
+                storeItem("currentSubTab", currentSubTab);
                 menuScrollY = 0;
                 handleTabSwitch("leaderboards");
             }
         }
         needsContinuousLoop = true;
     }
-    
+
     if (!needsContinuousLoop) {
         noLoop();
     }
@@ -328,13 +345,14 @@ function draw() {
 // ============================================================================
 
 function formatTime(ms) {
+    if (!ms) return "-"
     let totalSeconds = Math.floor(ms / 1000);
     let hours = Math.floor(totalSeconds / 3600);
     let minutes = Math.floor((totalSeconds % 3600) / 60);
     let seconds = totalSeconds % 60;
-    
+
     if (hours > 0) {
-        return hours + ":" + String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
+        return hours + "h" + String(minutes).padStart(2, '0') + "m";
     } else {
         return String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
     }
@@ -413,7 +431,7 @@ function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
             fill(splitColors[i % splitColors.length]);
             noStroke();
             rect(currentX, barY, segmentWidth, barHeight);
-            
+
             // Draw split value on segment if it fits
             let splitLabel = splitValues[i].toString();
             textSize(13);
@@ -423,7 +441,7 @@ function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
                 textAlign(CENTER, CENTER);
                 text(splitLabel, currentX + segmentWidth / 2, barY + barHeight / 2);
             }
-            
+
             currentX += segmentWidth;
         }
     }
@@ -597,7 +615,7 @@ function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) 
     textAlign(CENTER, TOP);
     let linkX = width / 2;
     text(discordText, linkX, y);
-    
+
     // Draw underline
     let linkWidth = textWidth(discordText);
     let linkHeight = 20;
@@ -605,7 +623,7 @@ function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) 
     strokeWeight(1);
     line(linkX - linkWidth / 2, y + linkHeight, linkX + linkWidth / 2, y + linkHeight);
     noStroke();
-    
+
     // Store link bounds for click detection (only if visible in content area)
     let linkY = y;
     if (linkY >= contentStartY - linkHeight && linkY <= contentStartY + contentHeight) {
@@ -637,7 +655,7 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
     let subTab = currentSubTab.leaderboards;
     let topScores;
     let emptyMessage;
-    
+
     if (subTab === "alltime") {
         topScores = topScoresAllTime;
         emptyMessage = "No scores yet.";
@@ -693,7 +711,7 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
 
 function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeight) {
     // Calculate total content height
-    let totalHeight = 30 + 35 + 35 + 20 + 35 + 35 + 20 + 35 + 200; // Stats + chains + games + history graph
+    let totalHeight = 30 + 30 + 30 + 15 + 30 + 50 + 15 + 30 + 30 + 15 + 30 + 30 + 20 + 150; // Stats + chains + fastest + high scores + history graph
 
     // Clamp scroll position
     let maxScroll = Math.max(0, totalHeight - contentHeight);
@@ -711,7 +729,7 @@ function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeig
     textSize(16);
 
     let y = contentStartY + 20 - menuScrollY;
-    let lineHeight = 30;
+    let lineHeight = 28;
 
     // Personal Highest Score
     text("Highest score:", panelX + 20, y);
@@ -736,39 +754,126 @@ function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeig
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
     text(statistics.gamesPlayed, panelX + panelWidth - 20, y);
-    y += lineHeight + 15;
+    y += lineHeight + 10;
 
     // Largest Chains header
     textAlign(LEFT, CENTER);
     fill(255);
     textSize(16);
     text("Largest chains:", panelX + 20, y);
-    y += lineHeight;
+    y += 25;
 
-    // Display all tile types on one row - centered
-    textSize(16);
-    let totalTileWidth = 5 * 24 + 4 * 40 + 16;
-    let startX = panelX + (panelWidth - totalTileWidth) / 2;
+    // Display all tile types on one row - spread out to use full width
+    // Account for tile + "×XX" text width when centering
+    textSize(14);
+    let tileSize = 26;
+    let itemFullWidth = tileSize + 32; // tile + "×XX" text approximate width
+    let availableWidth = panelWidth - 40; // 20px padding on each side
+    let tileSpacing = availableWidth / 5;
+    let startX = panelX + 12 + tileSpacing / 2 - itemFullWidth / 2 + tileSize / 2;
 
     for (let tileType = 1; tileType <= 5; tileType++) {
-        let tileX = startX + (tileType - 1) * (24 + 40);
+        let tileX = startX + (tileType - 1) * tileSpacing;
 
         fill(boxColors[tileType]);
         noStroke();
-        rect(tileX, y - 12, 24, 24);
+        rect(tileX, y - 13, tileSize, tileSize);
 
         fill(255, 230);
         textSize(18);
         textAlign(CENTER, CENTER);
-        text(tileType, tileX + 12, y + 1);
+        text(tileType, tileX + tileSize / 2, y);
 
         textAlign(LEFT, CENTER);
         fill(255);
-        textSize(16);
-        text("×" + statistics.largestChains[tileType], tileX + 28, y);
+        textSize(14);
+        text("×" + statistics.largestChains[tileType], tileX + tileSize + 4, y);
     }
 
-    y += lineHeight + 20;
+    y += 35;
+
+    // Fastest times - single row (4x1), format: [1k] MM:SS
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("Fastest times:", panelX + 20, y);
+    y += 27;
+
+    let timeTileSize = 26;
+    let timeItemWidth = (panelWidth - 40) / 4;
+    let fastestData = [
+        { score: "1k", time: statistics.fastestTo1000 },
+        { score: "3k", time: statistics.fastestTo3000 },
+        { score: "5k", time: statistics.fastestTo5000 },
+        { score: "7k", time: statistics.fastestTo7000 }
+    ];
+
+    let timeColors = [boxColors[6], boxColors[6], boxColors[6], boxColors[6]]
+
+    for (let i = 0; i < 4; i++) {
+        let itemCenterX = panelX + 20 + i * timeItemWidth + timeItemWidth / 2;
+        let tileX = itemCenterX - timeTileSize / 2 - 18;
+
+        // Draw colored tile
+        fill(timeColors[i]);
+        noStroke();
+        rect(tileX, y - timeTileSize / 2, timeTileSize, timeTileSize);
+
+        // Draw score label on tile
+        fill(255, 230);
+        textSize(14);
+        textAlign(CENTER, CENTER);
+        text(fastestData[i].score, tileX + timeTileSize / 2, y);
+
+        // Draw time
+        textAlign(LEFT, CENTER);
+        fill(255, 215, 0);
+        textSize(13);
+        let timeText = fastestData[i].time !== null ? formatTime(fastestData[i].time) : "-";
+        text(timeText, tileX + timeTileSize + 6, y);
+    }
+    y += 32;
+
+    // High score counts - single row (4x1), format: [tile] ×X
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("High-scoring games:", panelX + 20, y);
+    y += 27;
+
+    let scoreTileSize = 26;
+    let scoreItemWidth = (panelWidth - 40) / 4;
+    let scoreData = [
+        { score: "7k", count: statistics.gamesOver7000 || 0 },
+        { score: "8k", count: statistics.gamesOver8000 || 0 },
+        { score: "9k", count: statistics.gamesOver9000 || 0 },
+        { score: "10k", count: statistics.gamesOver10000 || 0 }
+    ];
+    
+    let scoreColors = [boxColors[6], boxColors[6], boxColors[6], boxColors[6]]
+
+    for (let i = 0; i < 4; i++) {
+        let itemCenterX = panelX + 20 + i * scoreItemWidth + scoreItemWidth / 2;
+        let tileX = itemCenterX - scoreTileSize / 2 - 15;
+
+        // Draw colored tile
+        fill(scoreColors[i]);
+        noStroke();
+        rect(tileX, y - scoreTileSize / 2, scoreTileSize, scoreTileSize);
+
+        // Draw score label on tile
+        fill(255, 230);
+        textSize(13);
+        textAlign(CENTER, CENTER);
+        text(scoreData[i].score, tileX + scoreTileSize / 2, y);
+
+        // Draw count
+        textAlign(LEFT, CENTER);
+        fill(255);
+        textSize(14);
+        text("×" + scoreData[i].count, tileX + scoreTileSize + 5, y);
+    }
+    y += 35;
 
     // Game History Graph - only show if at least 3 scores
     if (gameHistory.length >= 3) {
@@ -810,7 +915,7 @@ function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeig
             // Draw bars in white
             fill(255);
             rect(barX, barY, barWidth - barPadding, barHeight);
-            
+
             // Draw score label above bar (if it fits in view)
             if (barY - 10 >= graphY - 15) {
                 fill(255);
@@ -1280,21 +1385,21 @@ function isInsideMenuPanel(x, y) {
     let panelWidth = width - 30;
     let panelHeight = height - 110;
     return x >= panelX && x <= panelX + panelWidth &&
-           y >= panelY && y <= panelY + panelHeight;
+        y >= panelY && y <= panelY + panelHeight;
 }
 
 // Handle clicks outside the canvas to close menu
 function handleDocumentClick(event) {
     if (!showMenu) return;
-    
+
     // Check if click was inside the canvas
     let rect = canvas.elt.getBoundingClientRect();
     let clickX = event.clientX;
     let clickY = event.clientY;
-    
+
     let insideCanvas = clickX >= rect.left && clickX <= rect.right &&
-                       clickY >= rect.top && clickY <= rect.bottom;
-    
+        clickY >= rect.top && clickY <= rect.bottom;
+
     // If click was outside canvas, close menu
     if (!insideCanvas) {
         showMenu = false;
@@ -1322,7 +1427,8 @@ function onClick() {
             resetConfirmPending = false;
             // Menu toggle button (top left)
             showMenu = !showMenu;
-            
+            storeItem("showMenu", showMenu);
+
             // Handle data fetching when opening menu
             if (showMenu) {
                 handleTabSwitch(currentMenuTab);
@@ -1334,6 +1440,7 @@ function onClick() {
             // Click in score area (between menu and reset buttons)
             if (showMenu) {
                 showMenu = false;
+                storeItem("showMenu", showMenu);
             } else {
                 // Cycle through extra stat options
                 let options = ["nothing", "moves", "time", "split"];
@@ -1349,7 +1456,7 @@ function onClick() {
             // Check if click is inside the menu panel
             if (isInsideMenuPanel(mouseX, mouseY)) {
                 // Click is inside menu panel - handle interactive elements
-                
+
                 // Check if clicking on main tabs
                 let panelX = 15;
                 let panelWidth = width - 30;
@@ -1436,9 +1543,10 @@ function onClick() {
                     let checkboxSize = 24;
                     let lineHeight = 45;
 
-                    // Disable animation checkbox
-                    if (mouseY >= y - checkboxSize / 2 && mouseY <= y + checkboxSize / 2 &&
-                        mouseX >= checkboxX && mouseX <= checkboxX + checkboxSize) {
+                    // Disable animation checkbox - larger clickable area
+                    let clickPadding = 15;
+                    if (mouseY >= y - checkboxSize / 2 - clickPadding && mouseY <= y + checkboxSize / 2 + clickPadding &&
+                        mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding) {
                         settings.disableAnimation = !settings.disableAnimation;
                         saveSettings();
                         redraw();
@@ -1495,12 +1603,12 @@ function onClick() {
                 }
 
                 // Handle drag scrolling for scrollable tabs
-                if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" || 
+                if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" ||
                     (currentMenuTab === "stats" && currentSubTab.stats === "personal")) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
                 }
-                
+
                 // Click inside menu panel on non-interactive area - do nothing (don't close)
                 redraw();
                 return;
@@ -1557,7 +1665,7 @@ function fetchLeaderboardData(subTabId) {
 
 function mouseMoved() {
     // Update cursor based on hover state
-    
+
     if (showMenu && currentMenuTab === "howtoplay" && discordLinkBounds) {
         if (mouseX >= discordLinkBounds.x && mouseX <= discordLinkBounds.x + discordLinkBounds.width &&
             mouseY >= discordLinkBounds.y && mouseY <= discordLinkBounds.y + discordLinkBounds.height) {
@@ -1571,8 +1679,8 @@ function mouseMoved() {
 function isScrollableTab() {
     // Check if current tab/subtab combination is scrollable
     return showMenu && (
-        currentMenuTab === "howtoplay" || 
-        currentMenuTab === "achievements" || 
+        currentMenuTab === "howtoplay" ||
+        currentMenuTab === "achievements" ||
         (currentMenuTab === "stats" && currentSubTab.stats === "personal")
     );
 }
@@ -1753,7 +1861,8 @@ function initializeStatistics() {
     let savedStats = getItem("statistics");
 
     if (savedStats !== null) {
-        statistics = savedStats;
+        // Merge saved stats with defaults to ensure new fields are present
+        statistics = { ...statistics, ...savedStats };
     } else {
         // First time initialization - try to get personal best from database
         initializeStatisticsFromDatabase();
@@ -1806,6 +1915,33 @@ function updateStatisticsLive(score, chains) {
             saveStatistics();
         }
     }
+
+    // Track fastest times to reach score milestones
+    if (typeof grid !== 'undefined' && grid && grid.firstMoveTime !== null) {
+        let elapsed = Date.now() - grid.firstMoveTime;
+        let updated = false;
+
+        if (score >= 1000 && (statistics.fastestTo1000 === null || elapsed < statistics.fastestTo1000)) {
+            statistics.fastestTo1000 = elapsed;
+            updated = true;
+        }
+        if (score >= 3000 && (statistics.fastestTo3000 === null || elapsed < statistics.fastestTo3000)) {
+            statistics.fastestTo3000 = elapsed;
+            updated = true;
+        }
+        if (score >= 5000 && (statistics.fastestTo5000 === null || elapsed < statistics.fastestTo5000)) {
+            statistics.fastestTo5000 = elapsed;
+            updated = true;
+        }
+        if (score >= 7000 && (statistics.fastestTo7000 === null || elapsed < statistics.fastestTo7000)) {
+            statistics.fastestTo7000 = elapsed;
+            updated = true;
+        }
+
+        if (updated) {
+            saveStatistics();
+        }
+    }
 }
 
 function updateStatistics(score, chains) {
@@ -1814,6 +1950,12 @@ function updateStatistics(score, chains) {
 
     // Increment games played
     statistics.gamesPlayed++;
+
+    // Update high score counts
+    if (score >= 7000) statistics.gamesOver7000++;
+    if (score >= 8000) statistics.gamesOver8000++;
+    if (score >= 9000) statistics.gamesOver9000++;
+    if (score >= 10000) statistics.gamesOver10000++;
 
     saveStatistics();
 
@@ -1837,7 +1979,15 @@ function resetStatistics() {
         personalBest: 0,
         personalWorst: null,
         largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        gamesPlayed: 0
+        gamesPlayed: 0,
+        fastestTo1000: null,
+        fastestTo3000: null,
+        fastestTo5000: null,
+        fastestTo7000: null,
+        gamesOver7000: 0,
+        gamesOver8000: 0,
+        gamesOver9000: 0,
+        gamesOver10000: 0
     };
     saveStatistics();
     console.log("All statistics have been reset");
@@ -1870,9 +2020,9 @@ function addToGameHistory(score) {
     // Add score to beginning of history
     gameHistory.unshift(score);
 
-    // Keep only last 10 scores
-    if (gameHistory.length > 10) {
-        gameHistory = gameHistory.slice(0, 10);
+    // Keep only last 7 scores
+    if (gameHistory.length > 7) {
+        gameHistory = gameHistory.slice(0, 7);
     }
 
     saveGameHistory();
