@@ -31,7 +31,7 @@ const ACHIEVEMENTS = [
     },
     {
         id: "no_shapes_game",
-        description: "Lose a game without any shape tiles",
+        description: "Lose a game without collapsing any 5's",
         type: "special"
     },
     {

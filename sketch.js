@@ -1073,9 +1073,10 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
     });
 
     let isShapeTab = (subTab === "shape");
+    let checkboxAreaHeight = isShapeTab ? 75 : 0; // Space for header text and "Show shapes" checkbox
 
     // Calculate total content height
-    let totalHeight = 10;
+    let totalHeight = 10 + checkboxAreaHeight;
     for (let achievement of filteredAchievements) {
         if (isShapeTab && achievement.shapes) {
             // Shapes tab: title + shapes
@@ -1104,6 +1105,39 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
     // Achievement list with scroll offset
     textAlign(LEFT, CENTER);
     let y = contentStartY + 10 - menuScrollY;
+
+    // Draw header and "Show shapes" checkbox at top of shape tab
+    if (isShapeTab) {
+        // Header text
+        // fill(255);
+        // textSize(16);
+        // textAlign(LEFT, CENTER);
+        // text("Collect shapes by collapsing groups of 5's!", panelX + 20, y + 10);
+        
+        // y += 30;
+        
+        let checkboxSize = 24;
+        let checkboxX = panelX + panelWidth - 50;
+        let checkboxY = y + 10;
+        
+        fill(255);
+        textSize(16);
+        textAlign(LEFT, CENTER);
+        text("Show shapes on blank tiles:", panelX + 20, checkboxY);
+        
+        stroke(255);
+        strokeWeight(2);
+        noFill();
+        rect(checkboxX, checkboxY - checkboxSize / 2, checkboxSize, checkboxSize, 4);
+        
+        if (settings.showShapes) {
+            line(checkboxX + 4, checkboxY, checkboxX + 10, checkboxY + 6);
+            line(checkboxX + 10, checkboxY + 6, checkboxX + 20, checkboxY - 6);
+        }
+        noStroke();
+        
+        y += 45;
+    }
 
     if (filteredAchievements.length === 0) {
         fill(150);
@@ -1280,7 +1314,7 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     textAlign(LEFT, CENTER);
     fill(255);
     textSize(16);
-    text("Show shapes:", panelX + 20, y);
+    text("Show shapes on blank tiles:", panelX + 20, y);
 
     // Draw checkbox
     stroke(255);
@@ -1571,6 +1605,25 @@ function onClick() {
                     if (mouseX >= discordLinkBounds.x && mouseX <= discordLinkBounds.x + discordLinkBounds.width &&
                         mouseY >= discordLinkBounds.y && mouseY <= discordLinkBounds.y + discordLinkBounds.height) {
                         window.open(DISCORD_URL, '_blank');
+                        return;
+                    }
+                }
+
+                // Check if clicking "Show shapes" checkbox on achievements shape tab
+                if (currentMenuTab === "achievements" && currentSubTab.achievements === "shape") {
+                    let contentStartY = 110 + 35 + 28 + 10; // tabY + tabHeight + subTabHeight + padding
+                    // y starts at contentStartY + 10, +10 for checkbox center
+                    let checkboxY = contentStartY + 10 - menuScrollY + 10;
+                    let checkboxX = panelX + panelWidth - 50;
+                    let checkboxSize = 24;
+                    let clickPadding = 15;
+                    
+                    if (mouseY >= checkboxY - checkboxSize / 2 - clickPadding && mouseY <= checkboxY + checkboxSize / 2 + clickPadding &&
+                        mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding &&
+                        mouseY >= contentStartY) {
+                        settings.showShapes = !settings.showShapes;
+                        saveSettings();
+                        redraw();
                         return;
                     }
                 }
