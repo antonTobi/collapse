@@ -48,6 +48,8 @@ const ACHIEVEMENT_NOTIFICATION_DURATION = 4000; // 4 seconds
 let statistics = {
     personalBest: 0,
     personalWorst: null, // null means no completed games yet
+    bestWithoutBottomRow: null, // Best score without using bottom row
+    bestWithoutMiddleColumn: null, // Best score without using middle column
     largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     gamesPlayed: 0,
     fastestTo1000: null, // in ms
@@ -364,8 +366,29 @@ function formatTime(ms) {
 // ============================================================================
 
 function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
-    let contentY = contentStartY + 20;
     let lineHeight = 30;
+    
+    // Calculate total content height
+    let totalHeight = 20 + lineHeight * 2; // Moves and Time
+    if (grid.scoreSplits.length > 0) {
+        totalHeight += 10 + lineHeight + 30 + 20; // Score splits section
+    }
+    totalHeight += 20 + 25; // Heatmap header
+    let heatmapCellSize = 50; // Size to fit 3-digit numbers
+    totalHeight += heatmapCellSize * 5 + 20; // 5x5 heatmap
+    
+    // Clamp scroll position
+    let maxScroll = Math.max(0, totalHeight - contentHeight);
+    menuScrollY = Math.max(0, Math.min(menuScrollY, maxScroll));
+    
+    // Clip to content area
+    push();
+    drawingContext.save();
+    drawingContext.beginPath();
+    drawingContext.rect(panelX, contentStartY, panelWidth, contentHeight);
+    drawingContext.clip();
+    
+    let contentY = contentStartY + 20 - menuScrollY;
 
     // Number of moves
     textSize(16);
@@ -445,6 +468,83 @@ function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
 
             currentX += segmentWidth;
         }
+        contentY += 30 + 20; // bar height + spacing
+    }
+
+    // Position heatmap section
+    contentY += 20;
+    textAlign(LEFT, CENTER);
+    fill(255);
+    textSize(16);
+    text("Move heatmap:", panelX + 20, contentY);
+    contentY += 25;
+    
+    // Draw 5x5 heatmap centered
+    let cellSize = 50;
+    let heatmapWidth = cellSize * 5;
+    let heatmapX = panelX + (panelWidth - heatmapWidth) / 2;
+    let heatmapY = contentY;
+    
+    // Find max value for color scaling
+    let maxCount = 1;
+    if (grid.positionHeatmap) {
+        for (let i = 0; i < 5; i++) {
+            for (let j = 0; j < 5; j++) {
+                if (grid.positionHeatmap[i][j] > maxCount) {
+                    maxCount = grid.positionHeatmap[i][j];
+                }
+            }
+        }
+    }
+    
+    textSize(14);
+    for (let i = 0; i < 5; i++) {
+        for (let j = 0; j < 5; j++) {
+            let count = grid.positionHeatmap ? grid.positionHeatmap[i][j] : 0;
+            let cellX = heatmapX + i * cellSize;
+            // j=0 is bottom row in game, so flip for display (j=0 at bottom)
+            let cellY = heatmapY + (4 - j) * cellSize;
+            
+            // Color based on count (darker = fewer, brighter = more)
+            let intensity = count > 0 ? map(count, 0, maxCount, 40, 200) : 20;
+            let hue = count > 0 ? map(count, 0, maxCount, 200, 0) : 0; // Blue to red
+            
+            // Use a gradient from dark blue to bright red/orange
+            if (count === 0) {
+                fill(30, 30, 40);
+            } else {
+                // Interpolate from blue (low) to red (high)
+                let r = map(count, 0, maxCount, 50, 255);
+                let g = map(count, 0, maxCount, 50, 100);
+                let b = map(count, 0, maxCount, 150, 50);
+                fill(r, g, b);
+            }
+            
+            stroke(60);
+            strokeWeight(1);
+            rect(cellX, cellY, cellSize, cellSize);
+            
+            // Draw count number
+            noStroke();
+            fill(count > 0 ? 255 : 100);
+            textAlign(CENTER, CENTER);
+            text(count, cellX + cellSize / 2, cellY + cellSize / 2);
+        }
+    }
+    
+    // Restore clipping
+    drawingContext.restore();
+    pop();
+    
+    // Draw scrollbar if content overflows
+    if (totalHeight > contentHeight) {
+        let scrollbarX = panelX + panelWidth - 8;
+        let scrollbarHeight = contentHeight * (contentHeight / totalHeight);
+        let scrollbarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollbarHeight);
+        
+        fill(100, 150);
+        noStroke();
+        rect(scrollbarX, scrollbarY, 4, scrollbarHeight, 2);
     }
 
     textAlign(CENTER, CENTER);
@@ -746,6 +846,24 @@ function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeig
     textAlign(RIGHT, CENTER);
     fill(255, 215, 0);
     text(statistics.personalWorst != null ? statistics.personalWorst : "-", panelX + panelWidth - 20, y);
+    y += lineHeight;
+
+    // Best score without bottom row
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Best w/o bottom row:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(statistics.bestWithoutBottomRow != null ? statistics.bestWithoutBottomRow : "-", panelX + panelWidth - 20, y);
+    y += lineHeight;
+
+    // Best score without middle column
+    textAlign(LEFT, CENTER);
+    fill(255);
+    text("Best w/o middle col:", panelX + 20, y);
+    textAlign(RIGHT, CENTER);
+    fill(255, 215, 0);
+    text(statistics.bestWithoutMiddleColumn != null ? statistics.bestWithoutMiddleColumn : "-", panelX + panelWidth - 20, y);
     y += lineHeight;
 
     // Total Games Played
@@ -1725,7 +1843,7 @@ function onClick() {
                 // Handle drag scrolling for scrollable tabs
                 if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" ||
                     currentMenuTab === "settings" ||
-                    (currentMenuTab === "stats" && currentSubTab.stats === "personal")) {
+                    (currentMenuTab === "stats" && (currentSubTab.stats === "personal" || currentSubTab.stats === "thisgame"))) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
                 }
@@ -1803,7 +1921,7 @@ function isScrollableTab() {
         currentMenuTab === "howtoplay" ||
         currentMenuTab === "achievements" ||
         currentMenuTab === "settings" ||
-        (currentMenuTab === "stats" && currentSubTab.stats === "personal")
+        (currentMenuTab === "stats" && (currentSubTab.stats === "personal" || currentSubTab.stats === "thisgame"))
     );
 }
 
@@ -2093,6 +2211,38 @@ function updatePersonalWorst(score) {
         statistics.personalWorst = score;
         saveStatistics();
     }
+    
+    // Check if game qualifies for challenge mode stats
+    updateChallengeStats(score);
+}
+
+function updateChallengeStats(score) {
+    // Check if the game was played without using the bottom row or middle column
+    let usedBottomRow = false;
+    let usedMiddleColumn = false;
+    
+    if (grid.positionHeatmap) {
+        for (let i = 0; i < 5; i++) {
+            if (grid.positionHeatmap[i][0] > 0) usedBottomRow = true;
+            if (grid.positionHeatmap[2][i] > 0) usedMiddleColumn = true;
+        }
+    }
+    
+    // Update best score without bottom row
+    if (!usedBottomRow) {
+        if (statistics.bestWithoutBottomRow == null || score > statistics.bestWithoutBottomRow) {
+            statistics.bestWithoutBottomRow = score;
+            saveStatistics();
+        }
+    }
+    
+    // Update best score without middle column
+    if (!usedMiddleColumn) {
+        if (statistics.bestWithoutMiddleColumn == null || score > statistics.bestWithoutMiddleColumn) {
+            statistics.bestWithoutMiddleColumn = score;
+            saveStatistics();
+        }
+    }
 }
 
 function resetStatistics() {
@@ -2100,6 +2250,8 @@ function resetStatistics() {
     statistics = {
         personalBest: 0,
         personalWorst: null,
+        bestWithoutBottomRow: null,
+        bestWithoutMiddleColumn: null,
         largestChains: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
         gamesPlayed: 0,
         fastestTo1000: null,

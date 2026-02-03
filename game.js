@@ -69,7 +69,13 @@ class NumberGrid {
         this.largestChains = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; // Track largest chain for each tile type
         this.firstMoveTime = null; // Time of first move
         this.lastMoveTime = null; // Time of final move
-        this.clickedPositions = new Set(); // Track which positions (i,j) were clicked during this game
+        this.positionHeatmap = []; // Track how many times each position was clicked
+        for (let i = 0; i < w; i++) {
+            this.positionHeatmap[i] = [];
+            for (let j = 0; j < h; j++) {
+                this.positionHeatmap[i][j] = 0;
+            }
+        }
 
         this.refill();
 
@@ -177,11 +183,6 @@ class NumberGrid {
 
         let scoreGain = this.do(i, j);
         if (scoreGain) {
-            // Track clicked position (only during live gameplay)
-            if (!this.isReplaying) {
-                this.clickedPositions.add(`${i},${j}`);
-            }
-
             if (this.noLegalMoves()) {
                 this.gameOver = true;
                 this.scoreSplitDiff = null;
@@ -224,6 +225,9 @@ class NumberGrid {
 
         let [chain, coords] = this.getChainWithCoords(i, j);
         if (chain.length < 2) return 0;
+
+        // Track position usage (always, including during replay)
+        this.positionHeatmap[i][j]++;
 
         this.moves.push(alphabet[5 * j + i]);
         let scoreGain = n * chain.length;

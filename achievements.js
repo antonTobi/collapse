@@ -364,7 +364,12 @@ function checkSpecialAchievements() {
     
     // Check for 5000 points without using bottom row
     if (grid.gameOver && grid.score >= 5000) {
-        let usedBottomRow = [...grid.clickedPositions].some(pos => pos.endsWith(',0'));
+        let usedBottomRow = false;
+        if (grid.positionHeatmap) {
+            for (let i = 0; i < 5; i++) {
+                if (grid.positionHeatmap[i][0] > 0) usedBottomRow = true;
+            }
+        }
         if (!usedBottomRow) {
             unlockAchievement("no_bottom_row_5000");
         }
@@ -372,7 +377,12 @@ function checkSpecialAchievements() {
     
     // Check for 2000 points without using middle column
     if (grid.gameOver && grid.score >= 2000) {
-        let usedMiddleColumn = [...grid.clickedPositions].some(pos => pos.startsWith('2,'));
+        let usedMiddleColumn = false;
+        if (grid.positionHeatmap) {
+            for (let j = 0; j < 5; j++) {
+                if (grid.positionHeatmap[2][j] > 0) usedMiddleColumn = true;
+            }
+        }
         if (!usedMiddleColumn) {
             unlockAchievement("no_middle_column_2000");
         }
