@@ -345,7 +345,6 @@ function draw() {
 // ============================================================================
 
 function formatTime(ms) {
-    if (!ms) return "-"
     let totalSeconds = Math.floor(ms / 1000);
     let hours = Math.floor(totalSeconds / 3600);
     let minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -849,7 +848,7 @@ function drawPersonalStatsContent(panelX, contentStartY, panelWidth, contentHeig
         { score: "9k", count: statistics.gamesOver9000 || 0 },
         { score: "10k", count: statistics.gamesOver10000 || 0 }
     ];
-    
+
     let scoreColors = [boxColors[6], boxColors[6], boxColors[6], boxColors[6]]
 
     for (let i = 0; i < 4; i++) {
