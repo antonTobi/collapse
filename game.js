@@ -26,7 +26,10 @@ class Box {
             if (!isLocked) {
                 noStroke()
                 fill(255, 230)
-                text(this.n, x, y + 0.07 * S);
+                // Use actual text metrics for precise vertical centering across all platforms
+                let metrics = drawingContext.measureText(this.n.toString());
+                let yOffset = (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2;
+                text(this.n, x, y + yOffset);
             }
         } else {
             // Draw shape centered in the tile (only if showShapes setting is enabled)
