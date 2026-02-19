@@ -5,11 +5,6 @@
 // Achievement definitions
 const ACHIEVEMENTS = [
     {
-        id: "first_3_splits_100",
-        description: "Have the first 3 splits be multiples of 100",
-        type: "split"
-    },
-    {
         id: "bottom_row_12345",
         description: "Make the bottom row read \"12345\"",
         type: "special"
@@ -296,20 +291,7 @@ function checkAchievements(eventType, data) {
 
 // Check for split-based achievements
 function checkSplitAchievements() {
-    if (!grid || !grid.sixSplits) return;
-    
-    // Check if first 3 splits are multiples of 100
-    let sixSplits = grid.sixSplits;
-    if (sixSplits.length >= 3) {
-        let firstThreeSplits = [
-            sixSplits[0],
-            sixSplits[1] - sixSplits[0],
-            sixSplits[2] - sixSplits[1]
-        ];
-        if (firstThreeSplits.every(split => split > 0 && split % 100 === 0)) {
-            unlockAchievement("first_3_splits_100");
-        }
-    }
+    // No split-based achievements currently
 }
 
 function checkScoreAchievements(data) {
