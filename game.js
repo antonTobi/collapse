@@ -65,8 +65,9 @@ class NumberGrid {
             }
         }
 
-        this.scoreSplits = [];
+        this.scoreSplits = [[0]]; // Nested structure: [[0, score@5, score@5, ...], [score@6, score@5, ...], ...]
         this.scoreSplitDiff = null;
+        this.splitIndex = [0, 0]; // Current position [i, j] in the nested splits
         this.polyominoList = [];
         this.isReplaying = false;
         this.largestChains = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; // Track largest chain for each tile type
@@ -112,12 +113,32 @@ class NumberGrid {
         this.displayScore = this.score;
     }
 
+    // Get flat array of 6-split scores (for backward compatibility)
+    get sixSplits() {
+        // Return scores at [i][0] for i > 0 (each time a 6 was created)
+        let result = [];
+        for (let i = 1; i < this.scoreSplits.length; i++) {
+            result.push(this.scoreSplits[i][0]);
+        }
+        return result;
+    }
+
+    // Check if any splits exist (any 5 or 6 created beyond initial [[0]])
+    get hasSplits() {
+        return this.scoreSplits.length > 1 || this.scoreSplits[0].length > 1;
+    }
+
     get split() {
-        return this.score - (this.scoreSplits[this.scoreSplits.length - 2] || 0)
+        // Get the last 6-split value
+        let sixSplits = this.sixSplits;
+        if (sixSplits.length < 2) return this.score;
+        return this.score - sixSplits[sixSplits.length - 2];
     }
 
     get displaySplit() {
-        return max(0, this.displayScore - (this.scoreSplits[this.scoreSplits.length - 1] || 0))
+        let sixSplits = this.sixSplits;
+        if (sixSplits.length === 0) return this.displayScore;
+        return max(0, this.displayScore - sixSplits[sixSplits.length - 1]);
     }
 
     draw() {
@@ -205,11 +226,15 @@ class NumberGrid {
                     updatePersonalWorst(this.score);
                     // Add to game history
                     addToGameHistory(this.score);
-                    // Schedule popup after delay (handled in draw loop)
-                    if (settings.gameOverPopup !== "nothing") {
-                        gameOverPopupPending = true;
-                        gameOverSettledTime = null;
-                    }
+                    // Schedule leaderboard popup (handled in draw loop)
+                    gameOverPopupPending = true;
+                    gameOverSettledTime = null;
+                    gameOverLeaderboardReady = false;
+                    // Start fetching leaderboard immediately
+                    fetchTopScores(false).then(() => {
+                        gameOverLeaderboardReady = true;
+                        loop();
+                    });
                 }
             }
             // Save moves for both ongoing games and game over (to persist game over state)
@@ -266,15 +291,33 @@ class NumberGrid {
 
         this.scoreSplitDiff = null;
 
-
-
-
+        // Track splits for 5's (append to current inner list)
+        if (n + 1 == 5) {
+            this.scoreSplits[this.scoreSplits.length - 1].push(this.score);
+            this.splitIndex = [this.scoreSplits.length - 1, this.scoreSplits[this.scoreSplits.length - 1].length - 1];
+            
+            // Calculate split diff against comparison splits
+            if (typeof comparisonSplits !== 'undefined' && comparisonSplits && comparisonSplits.length > 0) {
+                this.scoreSplitDiff = this.score - getSplitComparison(comparisonSplits, this.splitIndex);
+                if (typeof splitDiffDisplayTime !== 'undefined') {
+                    splitDiffDisplayTime = Date.now();
+                }
+            }
+        }
 
         if (n + 1 == 6) {
             this.polyominoList.push(coords);
-            this.scoreSplits.push(this.score);
-            if (splits.length) {
-                this.scoreSplitDiff = this.score - (splits[this.scoreSplits.length - 1] || splits[splits.length - 1]);
+            // Create new inner list with current score
+            this.scoreSplits.push([this.score]);
+            this.splitIndex = [this.scoreSplits.length - 1, 0];
+            
+            // Calculate split diff against comparison splits
+            if (typeof comparisonSplits !== 'undefined' && comparisonSplits && comparisonSplits.length > 0) {
+                this.scoreSplitDiff = this.score - getSplitComparison(comparisonSplits, this.splitIndex);
+                // Set display time for fade animation
+                if (typeof splitDiffDisplayTime !== 'undefined') {
+                    splitDiffDisplayTime = Date.now();
+                }
             }
             box.shape = coords;
             box.split = this.split
@@ -364,13 +407,51 @@ class NumberGrid {
 }
 
 // ============================================================================
+// Split Comparison Utilities
+// ============================================================================
+
+/**
+ * Get the score from saved splits to compare against for position [i][j].
+ * If [i][j] doesn't exist in saved splits, find the latest earlier position.
+ * @param {Array} savedSplits - The saved nested splits array [[0, ...], [score, ...], ...]
+ * @param {Array} currentIndex - Current position as [i, j]
+ * @returns {number} - The score to compare against
+ */
+function getSplitComparison(savedSplits, currentIndex) {
+    let [i, j] = currentIndex;
+    
+    // Try exact match first
+    if (savedSplits[i] && savedSplits[i][j] !== undefined) {
+        return savedSplits[i][j];
+    }
+    
+    // Find the latest position that exists and is earlier in ordering
+    // Ordering: [0][0] < [0][1] < ... < [1][0] < [1][1] < ...
+    
+    // First, try earlier j in same i
+    if (savedSplits[i]) {
+        let lastJ = savedSplits[i].length - 1;
+        if (lastJ >= 0 && lastJ < j) {
+            return savedSplits[i][lastJ];
+        }
+    }
+    
+    // Otherwise, try earlier i
+    for (let ii = i - 1; ii >= 0; ii--) {
+        if (savedSplits[ii] && savedSplits[ii].length > 0) {
+            return savedSplits[ii][savedSplits[ii].length - 1];
+        }
+    }
+    
+    // Fallback to 0 if nothing found
+    return 0;
+}
+
+// ============================================================================
 // Game State
 // ============================================================================
 
 let grid;
-let highScore;
-let w = 5;
-let h = 5;
 
 // ============================================================================
 // Game Functions
@@ -394,6 +475,10 @@ function newGame() {
     if (grid && !grid.gameOver && grid.moves.length > 0) {
         updateStatistics(grid.score, grid.largestChains);
         addToGameHistory(grid.score);
+        // Save splits if this abandoned game beats daily best
+        if (grid.score > dailyBestScore && grid.hasSplits) {
+            saveDailySplits(grid.score, grid.scoreSplits);
+        }
     }
 
     grid = new NumberGrid(w, h);
@@ -401,6 +486,9 @@ function newGame() {
     removeItem("autoSaveMoves");
     removeItem("autoSaveFirstMoveTime");
     removeItem("autoSaveLastMoveTime");
+    
+    // Refetch comparison splits if needed (new day or score changed)
+    checkAndRefetchComparisonSplits();
 }
 
 // ============================================================================

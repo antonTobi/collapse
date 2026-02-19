@@ -10,6 +10,8 @@ const firebaseConfig = {
 };
 
 // Game Display Constants
+const w = 5;   // Grid width
+const h = 5;   // Grid height
 const S = 80;  // Cell size
 const X = 0;   // Grid X offset
 const Y = 80;  // Grid Y offset

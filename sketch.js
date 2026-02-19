@@ -26,9 +26,9 @@ let debug = false; // Set to true to enable debug features
 let settings = {
     disableAnimation: false,
     showShapes: false,
-    extraStat: "nothing", // "nothing", "moves", "time", "split"
-    gameOverPopup: "leaderboard", // "nothing", "leaderboard", "stats"
-    challengeMode: "none" // "none", "bottomrow", "middlecolumn"
+    extraStat: "nothing", // "nothing", "moves", "time"
+    challengeMode: "none", // "none", "bottomrow", "middlecolumn"
+    compareSplits: "pb" // "nothing", "pb", "dailypb", "wr", "dailywr"
 };
 
 // Game over popup state
@@ -43,6 +43,13 @@ const DISCORD_URL = "https://discord.gg/4EgJ8rjVag";
 let achievementNotification = null; // Text to display
 let achievementNotificationTime = 0; // Timestamp when notification was set
 const ACHIEVEMENT_NOTIFICATION_DURATION = 4000; // 4 seconds
+
+// Split diff display
+let splitDiffDisplayTime = 0; // Timestamp when split diff was set
+const SPLIT_DIFF_DURATION = 3000; // 3 seconds visible
+
+// Game over leaderboard state
+let gameOverLeaderboardReady = false; // True when leaderboard has been refreshed after game over
 
 // Statistics
 let statistics = {
@@ -140,10 +147,10 @@ function setup() {
 
     // Start version checking
     initializeVersionCheck();
-}
 
-// Set background color
-document.body.style.backgroundColor = bgLight;
+    // Set background color
+    document.body.style.backgroundColor = bgLight;
+}
 
 // ============================================================================
 // p5.js Draw Loop
@@ -181,19 +188,47 @@ function draw() {
         noStroke();
         text("Game Over", width / 2, 66);
     } else {
-        // Game in progress - show extra stat if configured
-        if (settings.extraStat !== "nothing") {
-            fill(0);
-            noStroke();
+        // Check if split diff should be displayed (takes priority over extra stat)
+        let showingSplitDiff = false;
+        if (settings.compareSplits !== "nothing" && grid.scoreSplitDiff !== null) {
+            let elapsed = Date.now() - splitDiffDisplayTime;
+            if (elapsed < SPLIT_DIFF_DURATION) {
+                showingSplitDiff = true;
+                let sign;
+                let textColor;
+                
+                if (grid.scoreSplitDiff < 0) {
+                    sign = "";
+                    textColor = color(128); // Gray
+                } else if (grid.scoreSplitDiff === 0) {
+                    sign = "=";
+                    textColor = color(128); // Gray
+                } else {
+                    sign = "+";
+                    textColor = color(0, 0, 255); // Blue
+                }
+                
+                let splitText = "(" + sign + grid.scoreSplitDiff + ")";
+                fill(textColor);
+                noStroke();
+                text(splitText, width / 2, 66);
+            }
+        }
+        
+        // Show extra stat if not showing split diff
+        if (!showingSplitDiff && settings.extraStat !== "nothing") {
             let extraStatText = "";
             if (settings.extraStat === "moves") {
                 extraStatText = grid.moves.length + " moves";
             } else if (settings.extraStat === "time") {
                 extraStatText = formatTime(grid.firstMoveTime !== null ? Date.now() - grid.firstMoveTime : 0);
-            } else if (settings.extraStat === "split") {
-                extraStatText = grid.displaySplit.toString();
             }
-            text(extraStatText, width / 2, 66);
+            
+            if (extraStatText) {
+                fill(0);
+                noStroke();
+                text(extraStatText, width / 2, 66);
+            }
         }
     }
 
@@ -301,6 +336,11 @@ function draw() {
     // Keep loop running if: animation in progress, score animating, notification showing, reset pending, or time clock displayed
     let needsContinuousLoop = !grid.settled || grid.displayScore !== grid.score || achievementNotification !== null || resetConfirmPending;
 
+    // Also keep loop running if split diff overlay is being displayed (for fade animation)
+    if (settings.compareSplits !== "nothing" && grid.scoreSplitDiff !== null && Date.now() - splitDiffDisplayTime < SPLIT_DIFF_DURATION) {
+        needsContinuousLoop = true;
+    }
+
     // Also keep loop running if time is being displayed (for live clock updates)
     if (!grid.gameOver && settings.extraStat === "time" && grid.firstMoveTime !== null) {
         needsContinuousLoop = true;
@@ -312,27 +352,22 @@ function draw() {
     }
 
     // Handle delayed game over popup
+    // Handle game over leaderboard display
     if (gameOverPopupPending) {
+        // Wait for animation to settle
         if (grid.settled && gameOverSettledTime === null) {
             gameOverSettledTime = Date.now();
         }
-        if (gameOverSettledTime !== null && Date.now() - gameOverSettledTime >= 1000) {
+        // Show leaderboard when both settled AND leaderboard data is ready
+        if (gameOverSettledTime !== null && gameOverLeaderboardReady) {
             gameOverPopupPending = false;
             gameOverSettledTime = null;
-            if (settings.gameOverPopup === "stats") {
-                showMenu = true;
-                currentMenuTab = "stats";
-                currentSubTab.stats = "thisgame";
-                storeItem("currentSubTab", currentSubTab);
-                menuScrollY = 0;
-            } else if (settings.gameOverPopup === "leaderboard") {
-                showMenu = true;
-                currentMenuTab = "leaderboards";
-                currentSubTab.leaderboards = "today";
-                storeItem("currentSubTab", currentSubTab);
-                menuScrollY = 0;
-                handleTabSwitch("leaderboards");
-            }
+            gameOverLeaderboardReady = false;
+            showMenu = true;
+            currentMenuTab = "leaderboards";
+            currentSubTab.leaderboards = "today";
+            storeItem("currentSubTab", currentSubTab);
+            menuScrollY = 0;
         }
         needsContinuousLoop = true;
     }
@@ -370,7 +405,7 @@ function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
     
     // Calculate total content height
     let totalHeight = 20 + lineHeight * 2; // Moves and Time
-    if (grid.scoreSplits.length > 0) {
+    if (grid.sixSplits.length > 0) {
         totalHeight += 10 + lineHeight + 30 + 20; // Score splits section
     }
     totalHeight += 20 + 25; // Heatmap header
@@ -415,8 +450,8 @@ function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
     }
     contentY += lineHeight;
 
-    // Score splits section - only show if there are splits
-    if (grid.scoreSplits.length > 0) {
+    // Score splits section - only show if there are 6-splits
+    if (grid.sixSplits.length > 0) {
         contentY += 10;
         textAlign(LEFT, CENTER);
         fill(255);
@@ -425,15 +460,16 @@ function drawThisGameStats(panelX, contentStartY, panelWidth, contentHeight) {
         contentY += lineHeight;
         // Calculate individual split values
         let splitValues = [];
-        for (let i = 0; i < grid.scoreSplits.length; i++) {
+        let sixSplits = grid.sixSplits;
+        for (let i = 0; i < sixSplits.length; i++) {
             if (i === 0) {
-                splitValues.push(grid.scoreSplits[0]);
+                splitValues.push(sixSplits[0]);
             } else {
-                splitValues.push(grid.scoreSplits[i] - grid.scoreSplits[i - 1]);
+                splitValues.push(sixSplits[i] - sixSplits[i - 1]);
             }
         }
         // Add the final segment (remaining score after last split)
-        let lastSplit = grid.scoreSplits[grid.scoreSplits.length - 1] || 0;
+        let lastSplit = sixSplits[sixSplits.length - 1] || 0;
         if (grid.score > lastSplit) {
             splitValues.push(grid.score - lastSplit);
         }
@@ -1390,8 +1426,8 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     let checkboxSize = 24;
     
     // Calculate total content height
-    // 2 checkboxes (45 each) + 3 toggle groups (45 + 30 each = 75 each) + padding
-    let totalHeight = 20 + lineHeight * 2 + (lineHeight + 30) * 3 + 20;
+    // 2 checkboxes (45 each) + 4 toggle groups (45 + 30 each = 75 each) + padding
+    let totalHeight = 20 + lineHeight * 2 + (lineHeight + 30) * 4 + 20;
     
     // Clamp scroll position
     let maxScroll = Math.max(0, totalHeight - contentHeight);
@@ -1461,8 +1497,7 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     let options = [
         { id: "nothing", label: "Nothing" },
         { id: "moves", label: "Moves" },
-        { id: "time", label: "Time" },
-        { id: "split", label: "Split" }
+        { id: "time", label: "Time" }
     ];
 
     let optionWidth = (panelWidth - 40) / options.length;
@@ -1484,39 +1519,50 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
 
     y += lineHeight;
 
-    // Game over popup setting
+    // Compare splits setting
     textAlign(LEFT, CENTER);
     fill(255);
     textSize(16);
-    text("After game over, show:", panelX + 20, y);
+    text("Compare splits against:", panelX + 20, y);
 
     y += 30;
 
-    // Draw toggle options for game over popup
-    let popupOptions = [
+    // Draw toggle options for compare splits
+    let splitOptions = [
         { id: "nothing", label: "Nothing" },
-        { id: "leaderboard", label: "Leaderboard" },
-        { id: "stats", label: "Stats" }
+        { id: "pb", label: "PB" },
+        { id: "dailypb", label: "Daily PB" },
+        { id: "wr", label: "WR" },
+        { id: "dailywr", label: "Daily WR" }
     ];
 
-    let popupOptionWidth = (panelWidth - 40) / popupOptions.length;
-    for (let i = 0; i < popupOptions.length; i++) {
-        let opt = popupOptions[i];
-        let optX = panelX + 20 + i * popupOptionWidth;
-        let isSelected = settings.gameOverPopup === opt.id;
+    let splitOptionWidth = (panelWidth - 40) / splitOptions.length;
+    let splitButtonHeight = 50;
+    for (let i = 0; i < splitOptions.length; i++) {
+        let opt = splitOptions[i];
+        let optX = panelX + 20 + i * splitOptionWidth;
+        let isSelected = settings.compareSplits === opt.id;
 
         // Option background
         fill(isSelected ? 80 : 40);
-        rect(optX, y - 15, popupOptionWidth - 5, 30, 4);
+        rect(optX, y - 15, splitOptionWidth - 5, splitButtonHeight, 4);
 
-        // Option text
+        // Option label
         fill(isSelected ? 255 : 150);
-        textSize(13);
+        textSize(11);
         textAlign(CENTER, CENTER);
-        text(opt.label, optX + (popupOptionWidth - 5) / 2, y);
+        text(opt.label, optX + (splitOptionWidth - 5) / 2, y);
+        
+        // Score underneath (except for "Nothing")
+        if (opt.id !== "nothing") {
+            let score = comparisonScores[opt.id];
+            fill(isSelected ? 200 : 120);
+            textSize(10);
+            text(score !== null ? score : "-", optX + (splitOptionWidth - 5) / 2, y + 16);
+        }
     }
 
-    y += lineHeight;
+    y += splitButtonHeight + 5;
 
     // Challenge mode setting
     textAlign(LEFT, CENTER);
@@ -1572,6 +1618,15 @@ function initializeSettings() {
     let savedSettings = getItem("settings");
     if (savedSettings !== null) {
         settings = { ...settings, ...savedSettings };
+        // Migrate old "split" or "splitdiff" extraStat to "nothing" (it's now a separate setting)
+        if (settings.extraStat === "split" || settings.extraStat === "splitdiff") {
+            settings.extraStat = "nothing";
+            // If they had splitdiff enabled, enable the new compareSplits setting
+            if (!settings.compareSplits || settings.compareSplits === "nothing") {
+                settings.compareSplits = "pb";
+            }
+            saveSettings();
+        }
     }
 }
 
@@ -1617,7 +1672,7 @@ function onClick() {
         // Header area - always accessible
         if (mouseX > width - 80) {
             // Reset button (top right)
-            if (grid.gameOver || grid.scoreSplits.length === 0 || resetConfirmPending) {
+            if (grid.gameOver || !grid.hasSplits || resetConfirmPending) {
                 newGame();
                 showMenu = false;
                 cachedShapeMatches = null;
@@ -1646,12 +1701,6 @@ function onClick() {
             if (showMenu) {
                 showMenu = false;
                 storeItem("showMenu", showMenu);
-            } else {
-                // Cycle through extra stat options
-                let options = ["nothing", "moves", "time", "split"];
-                let currentIndex = options.indexOf(settings.extraStat);
-                settings.extraStat = options[(currentIndex + 1) % options.length];
-                saveSettings();
                 loop();
             }
         }
@@ -1793,7 +1842,7 @@ function onClick() {
                         y += lineHeight + 30; // lineHeight + label spacing
 
                         // Extra stat options
-                        let options = ["nothing", "moves", "time", "split"];
+                        let options = ["nothing", "moves", "time"];
                         let optionWidth = (panelWidth - 40) / options.length;
                         for (let i = 0; i < options.length; i++) {
                             let optX = panelX + 20 + i * optionWidth;
@@ -1801,6 +1850,9 @@ function onClick() {
                                 mouseY >= y - 15 && mouseY <= y + 15) {
                                 settings.extraStat = options[i];
                                 saveSettings();
+                                if (options[i] === "time" && grid.firstMoveTime !== null) {
+                                    loop();
+                                }
                                 redraw();
                                 return;
                             }
@@ -1808,21 +1860,24 @@ function onClick() {
 
                         y += lineHeight + 30; // lineHeight + label spacing
 
-                        // Game over popup options
-                        let popupOptions = ["nothing", "leaderboard", "stats"];
-                        let popupOptionWidth = (panelWidth - 40) / popupOptions.length;
-                        for (let i = 0; i < popupOptions.length; i++) {
-                            let optX = panelX + 20 + i * popupOptionWidth;
-                            if (mouseX >= optX && mouseX <= optX + popupOptionWidth - 5 &&
-                                mouseY >= y - 15 && mouseY <= y + 15) {
-                                settings.gameOverPopup = popupOptions[i];
+                        // Compare splits options
+                        let splitOptions = ["nothing", "pb", "dailypb", "wr", "dailywr"];
+                        let splitOptionWidth = (panelWidth - 40) / splitOptions.length;
+                        let splitButtonHeight = 50;
+                        for (let i = 0; i < splitOptions.length; i++) {
+                            let optX = panelX + 20 + i * splitOptionWidth;
+                            if (mouseX >= optX && mouseX <= optX + splitOptionWidth - 5 &&
+                                mouseY >= y - 15 && mouseY <= y - 15 + splitButtonHeight) {
+                                settings.compareSplits = splitOptions[i];
                                 saveSettings();
+                                // Fetch new comparison splits
+                                fetchComparisonSplits(splitOptions[i]);
                                 redraw();
                                 return;
                             }
                         }
 
-                        y += lineHeight + 30; // lineHeight + label spacing
+                        y += splitButtonHeight + 5 + 30; // button height + gap + label spacing
 
                         // Challenge mode options
                         let challengeOptions = ["none", "bottomrow", "middlecolumn"];
@@ -1874,6 +1929,9 @@ function handleTabSwitch(tabId) {
         } else if (currentSubTab.stats === "global") {
             fetchGlobalStats().then(() => loop());
         }
+    } else if (tabId === "settings") {
+        // Refetch comparison scores when opening settings
+        fetchAllComparisonScores();
     }
 }
 

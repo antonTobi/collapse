@@ -296,14 +296,15 @@ function checkAchievements(eventType, data) {
 
 // Check for split-based achievements
 function checkSplitAchievements() {
-    if (!grid || !grid.scoreSplits) return;
+    if (!grid || !grid.sixSplits) return;
     
     // Check if first 3 splits are multiples of 100
-    if (grid.scoreSplits.length >= 3) {
+    let sixSplits = grid.sixSplits;
+    if (sixSplits.length >= 3) {
         let firstThreeSplits = [
-            grid.scoreSplits[0],
-            grid.scoreSplits[1] - grid.scoreSplits[0],
-            grid.scoreSplits[2] - grid.scoreSplits[1]
+            sixSplits[0],
+            sixSplits[1] - sixSplits[0],
+            sixSplits[2] - sixSplits[1]
         ];
         if (firstThreeSplits.every(split => split > 0 && split % 100 === 0)) {
             unlockAchievement("first_3_splits_100");
@@ -348,8 +349,8 @@ function checkSpecialAchievements() {
     // Check special condition achievements
     if (!grid) return;
     
-    // Check for game over without any shape tiles
-    if (grid.gameOver && grid.scoreSplits.length === 0) {
+    // Check for game over without any shape tiles (no 6s created)
+    if (grid.gameOver && grid.sixSplits.length === 0) {
         unlockAchievement("no_shapes_game");
     }
     

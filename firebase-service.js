@@ -24,8 +24,19 @@ let globalStats = {
 };
 
 // Daily Splits State
-let splits = [];
+let splits = [[0]]; // Nested structure: [[0, score@5, ...], [score@6, score@5, ...], ...]
 let dailyBestScore = 0;
+
+// Comparison Splits State
+let comparisonSplits = null; // Loaded splits to compare against
+let comparisonSplitsLoading = false; // Loading state
+let comparisonScores = {
+    pb: null,
+    dailypb: null,
+    wr: null,
+    dailywr: null
+};
+let lastComparisonFetchDate = null; // Track date to detect day change
 
 // ============================================================================
 // Date Utilities
@@ -49,7 +60,7 @@ function getYesterdayDateString() {
 function loadDailySplits() {
     const savedData = getItem("dailySplits");
     if (!savedData) {
-        splits = [];
+        splits = [[0]]; // Initial nested structure
         dailyBestScore = 0;
         return;
     }
@@ -59,11 +70,11 @@ function loadDailySplits() {
 
     if (date === today) {
         // Same day, load the splits
-        splits = savedSplits || [];
+        splits = savedSplits || [[0]];
         dailyBestScore = score || 0;
     } else {
         // Different day, discard old data
-        splits = [];
+        splits = [[0]];
         dailyBestScore = 0;
         removeItem("dailySplits");
     }
@@ -79,6 +90,286 @@ function saveDailySplits(score, scoreSplits) {
     dailyBestScore = score;
     splits = scoreSplits;
     console.log("New daily record! Splits saved:", scoreSplits);
+}
+
+// ============================================================================
+// Comparison Splits Fetching
+// ============================================================================
+
+/**
+ * Replay a game to extract its splits structure
+ * @param {number} seed - The game seed
+ * @param {string} moves - The moves string
+ * @returns {Array} - The nested splits array
+ */
+function replayGameForSplits(seed, moves) {
+    // Create a temporary grid to replay the game
+    let state = seed % m;
+    let score = 0;
+    let maxGen = 3;
+    let scoreSplits = [[0]];
+    
+    // Initialize grid state
+    let gridState = [];
+    for (let i = 0; i < w; i++) {
+        gridState[i] = [];
+        for (let j = 0; j < h; j++) {
+            gridState[i][j] = 0;
+        }
+    }
+    
+    // Fill initial grid
+    for (let i = 0; i < w; i++) {
+        for (let j = 0; j < h; j++) {
+            state = (state * a + c) % m;
+            gridState[i][j] = Math.floor((maxGen * state) / m) + 1;
+        }
+    }
+    
+    // Replay each move
+    for (let moveChar of moves) {
+        let k = tebahpla[moveChar];
+        if (k === undefined) continue;
+        
+        let mi = k % 5;
+        let mj = Math.floor(k / 5);
+        
+        let n = gridState[mi][mj];
+        if (n === 0 || n > 5) continue;
+        
+        // Get chain at position
+        let chain = getChainAt(gridState, mi, mj, n);
+        if (chain.length < 2) continue;
+        
+        // Calculate score gain
+        let scoreGain = n * chain.length;
+        score += scoreGain;
+        
+        // Clear chain cells
+        for (let [ci, cj] of chain) {
+            gridState[ci][cj] = 0;
+        }
+        
+        // Upgrade clicked cell
+        gridState[mi][mj] = n + 1;
+        if (n + 1 === 4) maxGen = 4;
+        
+        // Track splits for 5's and 6's
+        if (n + 1 === 5) {
+            scoreSplits[scoreSplits.length - 1].push(score);
+        } else if (n + 1 === 6) {
+            scoreSplits.push([score]);
+        }
+        
+        // Refill grid (simulate gravity and new tiles)
+        for (let i = 0; i < w; i++) {
+            // Remove zeros (gravity)
+            gridState[i] = gridState[i].filter(v => v !== 0);
+            // Add new tiles from top
+            let removedCount = h - gridState[i].length;
+            for (let k = 0; k < removedCount; k++) {
+                state = (state * a + c) % m;
+                gridState[i].push(Math.floor((maxGen * state) / m) + 1);
+            }
+        }
+    }
+    
+    return scoreSplits;
+}
+
+/**
+ * Get chain of matching tiles at position (flood fill)
+ */
+function getChainAt(grid, i, j, n) {
+    let chain = [];
+    let visited = new Set();
+    let stack = [[i, j]];
+    
+    while (stack.length > 0) {
+        let [ci, cj] = stack.pop();
+        let key = `${ci},${cj}`;
+        
+        if (visited.has(key)) continue;
+        if (ci < 0 || ci >= w || cj < 0 || cj >= h) continue;
+        if (grid[ci][cj] !== n) continue;
+        
+        visited.add(key);
+        chain.push([ci, cj]);
+        
+        stack.push([ci - 1, cj]);
+        stack.push([ci + 1, cj]);
+        stack.push([ci, cj - 1]);
+        stack.push([ci, cj + 1]);
+    }
+    
+    return chain;
+}
+
+/**
+ * Fetch comparison splits based on the current setting
+ * @param {string} compareType - "nothing", "pb", "dailypb", "wr", "dailywr"
+ * @param {boolean} forceRefetch - Force refetch even if cached
+ */
+async function fetchComparisonSplits(compareType, forceRefetch = false) {
+    if (compareType === "nothing") {
+        comparisonSplits = null;
+        console.log("Comparison splits disabled");
+        return;
+    }
+    
+    comparisonSplitsLoading = true;
+    lastComparisonFetchDate = getTodayDateString();
+    
+    try {
+        let gameData = null;
+        
+        if (compareType === "pb") {
+            // Fetch user's personal best (all-time)
+            if (!currentUser) {
+                console.log("No user signed in, cannot fetch PB");
+                comparisonSplits = null;
+                comparisonSplitsLoading = false;
+                return;
+            }
+            const doc = await db.collection('highscores').doc(currentUser.uid).get();
+            if (doc.exists) {
+                gameData = doc.data();
+            }
+        } else if (compareType === "dailypb") {
+            // Fetch user's daily personal best
+            if (!currentUser) {
+                console.log("No user signed in, cannot fetch daily PB");
+                comparisonSplits = null;
+                comparisonSplitsLoading = false;
+                return;
+            }
+            const today = getTodayDateString();
+            const doc = await db.collection('dailyhighscores').doc(today).collection('scores').doc(currentUser.uid).get();
+            if (doc.exists) {
+                gameData = doc.data();
+            }
+        } else if (compareType === "wr") {
+            // Fetch world record (all-time)
+            const snapshot = await db.collection('highscores')
+                .orderBy('score', 'desc')
+                .limit(1)
+                .get();
+            if (!snapshot.empty) {
+                gameData = snapshot.docs[0].data();
+            }
+        } else if (compareType === "dailywr") {
+            // Fetch daily world record
+            const today = getTodayDateString();
+            const snapshot = await db.collection('dailyhighscores').doc(today).collection('scores')
+                .orderBy('score', 'desc')
+                .limit(1)
+                .get();
+            if (!snapshot.empty) {
+                gameData = snapshot.docs[0].data();
+            }
+        }
+        
+        // Update cached score
+        const newScore = gameData?.score || null;
+        const oldScore = comparisonScores[compareType];
+        comparisonScores[compareType] = newScore;
+        
+        if (gameData && gameData.seed && gameData.moves) {
+            // Only recalculate splits if score changed or forced
+            if (forceRefetch || oldScore !== newScore || comparisonSplits === null) {
+                comparisonSplits = replayGameForSplits(gameData.seed, gameData.moves);
+                console.log(`Loaded ${compareType} splits (score: ${gameData.score}):`, comparisonSplits);
+            }
+        } else {
+            comparisonSplits = null;
+            console.log(`No ${compareType} game data found`);
+        }
+    } catch (error) {
+        console.error("Error fetching comparison splits:", error);
+        comparisonSplits = null;
+    }
+    
+    comparisonSplitsLoading = false;
+}
+
+/**
+ * Fetch all comparison scores for display in settings (without calculating splits)
+ */
+async function fetchAllComparisonScores() {
+    const today = getTodayDateString();
+    
+    try {
+        // Fetch PB
+        if (currentUser) {
+            const pbDoc = await db.collection('highscores').doc(currentUser.uid).get();
+            comparisonScores.pb = pbDoc.exists ? pbDoc.data().score : null;
+            
+            const dailyPbDoc = await db.collection('dailyhighscores').doc(today).collection('scores').doc(currentUser.uid).get();
+            comparisonScores.dailypb = dailyPbDoc.exists ? dailyPbDoc.data().score : null;
+        }
+        
+        // Fetch WR
+        const wrSnapshot = await db.collection('highscores')
+            .orderBy('score', 'desc')
+            .limit(1)
+            .get();
+        comparisonScores.wr = !wrSnapshot.empty ? wrSnapshot.docs[0].data().score : null;
+        
+        // Fetch Daily WR
+        const dailyWrSnapshot = await db.collection('dailyhighscores').doc(today).collection('scores')
+            .orderBy('score', 'desc')
+            .limit(1)
+            .get();
+        comparisonScores.dailywr = !dailyWrSnapshot.empty ? dailyWrSnapshot.docs[0].data().score : null;
+        
+        lastComparisonFetchDate = today;
+        loop(); // Trigger redraw to show updated scores
+    } catch (error) {
+        console.error("Error fetching comparison scores:", error);
+    }
+}
+
+/**
+ * Check if comparison splits need refetching (new day or score changed)
+ * Called on new game start
+ */
+async function checkAndRefetchComparisonSplits() {
+    const compareType = settings.compareSplits;
+    if (compareType === "nothing") return;
+    
+    const today = getTodayDateString();
+    const isNewDay = lastComparisonFetchDate !== today;
+    
+    // Refetch if it's a new day (daily scores reset) or if we haven't fetched yet
+    if (isNewDay || comparisonSplits === null) {
+        console.log("Refetching comparison splits:", isNewDay ? "new day" : "no cached splits");
+        await fetchComparisonSplits(compareType, true);
+    } else {
+        // Check if score changed by fetching current score
+        let currentScore = null;
+        try {
+            if (compareType === "pb" && currentUser) {
+                const doc = await db.collection('highscores').doc(currentUser.uid).get();
+                currentScore = doc.exists ? doc.data().score : null;
+            } else if (compareType === "dailypb" && currentUser) {
+                const doc = await db.collection('dailyhighscores').doc(today).collection('scores').doc(currentUser.uid).get();
+                currentScore = doc.exists ? doc.data().score : null;
+            } else if (compareType === "wr") {
+                const snapshot = await db.collection('highscores').orderBy('score', 'desc').limit(1).get();
+                currentScore = !snapshot.empty ? snapshot.docs[0].data().score : null;
+            } else if (compareType === "dailywr") {
+                const snapshot = await db.collection('dailyhighscores').doc(today).collection('scores').orderBy('score', 'desc').limit(1).get();
+                currentScore = !snapshot.empty ? snapshot.docs[0].data().score : null;
+            }
+            
+            if (currentScore !== comparisonScores[compareType]) {
+                console.log(`Score changed for ${compareType}: ${comparisonScores[compareType]} -> ${currentScore}`);
+                await fetchComparisonSplits(compareType, true);
+            }
+        } catch (error) {
+            console.error("Error checking comparison score:", error);
+        }
+    }
 }
 
 // ============================================================================
@@ -415,6 +706,14 @@ function initializeAuth() {
             if (typeof initializeStatisticsFromDatabase === 'function') {
                 initializeStatisticsFromDatabase();
             }
+            
+            // Fetch comparison splits based on current setting
+            if (typeof settings !== 'undefined' && settings.compareSplits && settings.compareSplits !== "nothing") {
+                fetchComparisonSplits(settings.compareSplits);
+            }
+            
+            // Fetch all comparison scores for settings display
+            fetchAllComparisonScores();
         } else {
             // User is signed out.
             currentUser = null;
