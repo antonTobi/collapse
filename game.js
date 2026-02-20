@@ -65,9 +65,8 @@ class NumberGrid {
             }
         }
 
-        this.scoreSplits = [[0]]; // Nested structure: [[0, score@5, score@5, ...], [score@6, score@5, ...], ...]
+        this.scoreSplits = []; // Simple list: [score@6, score@6, ..., finalScore]
         this.scoreSplitDiff = null;
-        this.splitIndex = [0, 0]; // Current position [i, j] in the nested splits
         this.polyominoList = [];
         this.isReplaying = false;
         this.largestChains = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }; // Track largest chain for each tile type
@@ -113,32 +112,25 @@ class NumberGrid {
         this.displayScore = this.score;
     }
 
-    // Get flat array of 6-split scores (for backward compatibility)
+    // Get the splits array (scores at each 6 creation, plus final score)
     get sixSplits() {
-        // Return scores at [i][0] for i > 0 (each time a 6 was created)
-        let result = [];
-        for (let i = 1; i < this.scoreSplits.length; i++) {
-            result.push(this.scoreSplits[i][0]);
-        }
-        return result;
+        return this.scoreSplits;
     }
 
-    // Check if any splits exist (any 5 or 6 created beyond initial [[0]])
+    // Check if any splits exist (any 6 created)
     get hasSplits() {
-        return this.scoreSplits.length > 1 || this.scoreSplits[0].length > 1;
+        return this.scoreSplits.length > 0;
     }
 
     get split() {
-        // Get the last 6-split value
-        let sixSplits = this.sixSplits;
-        if (sixSplits.length < 2) return this.score;
-        return this.score - sixSplits[sixSplits.length - 2];
+        // Get points since last 6 (or since start if no 6's yet)
+        if (this.scoreSplits.length < 2) return this.score;
+        return this.score - this.scoreSplits[this.scoreSplits.length - 2];
     }
 
     get displaySplit() {
-        let sixSplits = this.sixSplits;
-        if (sixSplits.length === 0) return this.displayScore;
-        return max(0, this.displayScore - sixSplits[sixSplits.length - 1]);
+        if (this.scoreSplits.length === 0) return this.displayScore;
+        return max(0, this.displayScore - this.scoreSplits[this.scoreSplits.length - 1]);
     }
 
     draw() {
@@ -210,7 +202,11 @@ class NumberGrid {
             if (this.noLegalMoves()) {
                 this.gameOver = true;
                 this.scoreSplitDiff = null;
-                saveHighScore(this.score, this.seed, grid.moves.join(""));
+                
+                // Add final score to splits (if not already there from last 6)
+                if (this.scoreSplits.length === 0 || this.scoreSplits[this.scoreSplits.length - 1] !== this.score) {
+                    this.scoreSplits.push(this.score);
+                }
 
                 // Only save splits if this is a new daily record
                 if (this.score > dailyBestScore) {
@@ -230,8 +226,10 @@ class NumberGrid {
                     gameOverPopupPending = true;
                     gameOverSettledTime = null;
                     gameOverLeaderboardReady = false;
-                    // Start fetching leaderboard immediately
-                    fetchTopScores(false).then(() => {
+                    // Save score first, then fetch leaderboard (ensures new score is included)
+                    saveHighScore(this.score, this.seed, grid.moves.join("")).then(() => {
+                        return fetchTopScores(false);
+                    }).then(() => {
                         gameOverLeaderboardReady = true;
                         loop();
                     });
@@ -291,30 +289,17 @@ class NumberGrid {
 
         this.scoreSplitDiff = null;
 
-        // Track splits for 5's (append to current inner list)
-        if (n + 1 == 5) {
-            this.scoreSplits[this.scoreSplits.length - 1].push(this.score);
-            this.splitIndex = [this.scoreSplits.length - 1, this.scoreSplits[this.scoreSplits.length - 1].length - 1];
-            
-            // Calculate split diff against comparison splits
-            if (typeof comparisonSplits !== 'undefined' && comparisonSplits && comparisonSplits.length > 0) {
-                this.scoreSplitDiff = this.score - getSplitComparison(comparisonSplits, this.splitIndex);
-                if (typeof splitDiffDisplayTime !== 'undefined') {
-                    splitDiffDisplayTime = Date.now();
-                }
-            }
-        }
-
         if (n + 1 == 6) {
             this.polyominoList.push(coords);
-            // Create new inner list with current score
-            this.scoreSplits.push([this.score]);
-            this.splitIndex = [this.scoreSplits.length - 1, 0];
+            // Add current score to splits
+            this.scoreSplits.push(this.score);
             
             // Calculate split diff against comparison splits
             if (typeof comparisonSplits !== 'undefined' && comparisonSplits && comparisonSplits.length > 0) {
-                this.scoreSplitDiff = this.score - getSplitComparison(comparisonSplits, this.splitIndex);
-                // Set display time for fade animation
+                let splitIndex = this.scoreSplits.length - 1;
+                let comparisonScore = splitIndex < comparisonSplits.length ? comparisonSplits[splitIndex] : comparisonSplits[comparisonSplits.length - 1];
+                this.scoreSplitDiff = this.score - comparisonScore;
+                // Set display time
                 if (typeof splitDiffDisplayTime !== 'undefined') {
                     splitDiffDisplayTime = Date.now();
                 }
@@ -404,47 +389,6 @@ class NumberGrid {
         }
         return true;
     }
-}
-
-// ============================================================================
-// Split Comparison Utilities
-// ============================================================================
-
-/**
- * Get the score from saved splits to compare against for position [i][j].
- * If [i][j] doesn't exist in saved splits, find the latest earlier position.
- * @param {Array} savedSplits - The saved nested splits array [[0, ...], [score, ...], ...]
- * @param {Array} currentIndex - Current position as [i, j]
- * @returns {number} - The score to compare against
- */
-function getSplitComparison(savedSplits, currentIndex) {
-    let [i, j] = currentIndex;
-    
-    // Try exact match first
-    if (savedSplits[i] && savedSplits[i][j] !== undefined) {
-        return savedSplits[i][j];
-    }
-    
-    // Find the latest position that exists and is earlier in ordering
-    // Ordering: [0][0] < [0][1] < ... < [1][0] < [1][1] < ...
-    
-    // First, try earlier j in same i
-    if (savedSplits[i]) {
-        let lastJ = savedSplits[i].length - 1;
-        if (lastJ >= 0 && lastJ < j) {
-            return savedSplits[i][lastJ];
-        }
-    }
-    
-    // Otherwise, try earlier i
-    for (let ii = i - 1; ii >= 0; ii--) {
-        if (savedSplits[ii] && savedSplits[ii].length > 0) {
-            return savedSplits[ii][savedSplits[ii].length - 1];
-        }
-    }
-    
-    // Fallback to 0 if nothing found
-    return 0;
 }
 
 // ============================================================================

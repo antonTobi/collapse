@@ -190,33 +190,23 @@ function draw() {
     } else {
         // Check if split diff should be displayed (takes priority over extra stat)
         let showingSplitDiff = false;
+        let splitDiffAlpha = 255;
+        
         if (settings.compareSplits !== "nothing" && grid.scoreSplitDiff !== null) {
             let elapsed = Date.now() - splitDiffDisplayTime;
             if (elapsed < SPLIT_DIFF_DURATION) {
                 showingSplitDiff = true;
-                let sign;
-                let textColor;
                 
-                if (grid.scoreSplitDiff < 0) {
-                    sign = "";
-                    textColor = color(128); // Gray
-                } else if (grid.scoreSplitDiff === 0) {
-                    sign = "=";
-                    textColor = color(128); // Gray
-                } else {
-                    sign = "+";
-                    textColor = color(0, 0, 255); // Blue
+                // Calculate alpha for fadeout in last 0.5 seconds
+                let fadeStartTime = SPLIT_DIFF_DURATION - 500;
+                if (elapsed > fadeStartTime) {
+                    splitDiffAlpha = 255 * (1 - (elapsed - fadeStartTime) / 500);
                 }
-                
-                let splitText = "(" + sign + grid.scoreSplitDiff + ")";
-                fill(textColor);
-                noStroke();
-                text(splitText, width / 2, 66);
             }
         }
         
-        // Show extra stat if not showing split diff
-        if (!showingSplitDiff && settings.extraStat !== "nothing") {
+        // Always draw extra stat first (underneath), so it shows through during fadeout
+        if (settings.extraStat !== "nothing") {
             let extraStatText = "";
             if (settings.extraStat === "moves") {
                 extraStatText = grid.moves.length + " moves";
@@ -229,6 +219,40 @@ function draw() {
                 noStroke();
                 text(extraStatText, width / 2, 66);
             }
+        }
+        
+        // Draw split diff on top with background rectangle
+        if (showingSplitDiff) {
+            let sign;
+            let textColor;
+            
+            if (grid.scoreSplitDiff < 0) {
+                sign = "";
+                textColor = color(128); // Gray
+            } else if (grid.scoreSplitDiff === 0) {
+                sign = "=";
+                textColor = color(128); // Gray
+            } else {
+                sign = "+";
+                textColor = color(0, 0, 255); // Blue
+            }
+            
+            let splitText = "(" + sign + grid.scoreSplitDiff + ")";
+            
+            // Draw background rectangle to cover extra stat (only needed if there's an extra stat)
+            if (settings.extraStat !== "nothing") {
+                noStroke();
+                fill(red(color(bgLight)), green(color(bgLight)), blue(color(bgLight)), splitDiffAlpha);
+                // Use a fixed width that covers typical extra stat text
+                let rectWidth = 180;
+                let rectHeight = 24;
+                rect(width / 2 - rectWidth / 2, 66 - rectHeight / 2, rectWidth, rectHeight);
+            }
+            
+            // Draw split diff text with alpha
+            fill(red(textColor), green(textColor), blue(textColor), splitDiffAlpha);
+            noStroke();
+            text(splitText, width / 2, 66);
         }
     }
 

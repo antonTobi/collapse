@@ -24,7 +24,7 @@ let globalStats = {
 };
 
 // Daily Splits State
-let splits = [[0]]; // Nested structure: [[0, score@5, ...], [score@6, score@5, ...], ...]
+let splits = []; // Simple array: [score@6, score@6, ..., finalScore]
 let dailyBestScore = 0;
 
 // Comparison Splits State
@@ -60,7 +60,7 @@ function getYesterdayDateString() {
 function loadDailySplits() {
     const savedData = getItem("dailySplits");
     if (!savedData) {
-        splits = [[0]]; // Initial nested structure
+        splits = []; // Empty array for new day
         dailyBestScore = 0;
         return;
     }
@@ -70,11 +70,11 @@ function loadDailySplits() {
 
     if (date === today) {
         // Same day, load the splits
-        splits = savedSplits || [[0]];
+        splits = savedSplits || [];
         dailyBestScore = score || 0;
     } else {
         // Different day, discard old data
-        splits = [[0]];
+        splits = [];
         dailyBestScore = 0;
         removeItem("dailySplits");
     }
@@ -97,17 +97,17 @@ function saveDailySplits(score, scoreSplits) {
 // ============================================================================
 
 /**
- * Replay a game to extract its splits structure
+ * Replay a game to extract its splits (scores at each 6 creation, plus final score)
  * @param {number} seed - The game seed
  * @param {string} moves - The moves string
- * @returns {Array} - The nested splits array
+ * @returns {Array} - Simple array of scores [score@6, score@6, ..., finalScore]
  */
 function replayGameForSplits(seed, moves) {
     // Create a temporary grid to replay the game
     let state = seed % m;
     let score = 0;
     let maxGen = 3;
-    let scoreSplits = [[0]];
+    let scoreSplits = [];
     
     // Initialize grid state
     let gridState = [];
@@ -154,11 +154,9 @@ function replayGameForSplits(seed, moves) {
         gridState[mi][mj] = n + 1;
         if (n + 1 === 4) maxGen = 4;
         
-        // Track splits for 5's and 6's
-        if (n + 1 === 5) {
-            scoreSplits[scoreSplits.length - 1].push(score);
-        } else if (n + 1 === 6) {
-            scoreSplits.push([score]);
+        // Track splits only for 6's
+        if (n + 1 === 6) {
+            scoreSplits.push(score);
         }
         
         // Refill grid (simulate gravity and new tiles)
@@ -172,6 +170,11 @@ function replayGameForSplits(seed, moves) {
                 gridState[i].push(Math.floor((maxGen * state) / m) + 1);
             }
         }
+    }
+    
+    // Add final score to splits
+    if (scoreSplits.length === 0 || scoreSplits[scoreSplits.length - 1] !== score) {
+        scoreSplits.push(score);
     }
     
     return scoreSplits;
