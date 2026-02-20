@@ -234,10 +234,18 @@ function draw() {
                 textColor = color(128); // Gray
             } else {
                 sign = "+";
-                textColor = color(0, 0, 255); // Blue
+                textColor = color(10, 10, 240); // Blue
             }
             
-            let splitText = "(" + sign + grid.scoreSplitDiff + ")";
+            let splitText =sign + grid.scoreSplitDiff;
+            
+            // Add "vs" label based on comparison type
+            let vsLabel = "";
+            if (settings.compareSplits === "pb") vsLabel = " vs PB";
+            else if (settings.compareSplits === "dailypb") vsLabel = " vs DPB";
+            else if (settings.compareSplits === "wr") vsLabel = " vs WR";
+            else if (settings.compareSplits === "dailywr") vsLabel = " vs DWR";
+            splitText += vsLabel;
             
             // Draw background rectangle to cover extra stat (only needed if there's an extra stat)
             if (settings.extraStat !== "nothing") {
@@ -1725,8 +1733,17 @@ function onClick() {
             if (showMenu) {
                 showMenu = false;
                 storeItem("showMenu", showMenu);
-                loop();
+            } else {
+                // Cycle through extra stat options
+                let options = ["nothing", "moves", "time"];
+                let currentIndex = options.indexOf(settings.extraStat);
+                settings.extraStat = options[(currentIndex + 1) % options.length];
+                saveSettings();
+                if (settings.extraStat === "time" && grid.firstMoveTime !== null) {
+                    loop();
+                }
             }
+            loop();
         }
     } else {
         resetConfirmPending = false;
