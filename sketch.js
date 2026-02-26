@@ -28,7 +28,7 @@ let settings = {
     showShapes: false,
     extraStat: "nothing", // "nothing", "moves", "time"
     challengeMode: "none", // "none", "bottomrow", "middlecolumn"
-    compareSplits: "pb" // "nothing", "pb", "dailypb", "wr", "dailywr"
+    compareSplits: "nothing" // "nothing", "pb", "dailypb", "wr", "dailywr"
 };
 
 // Game over popup state
