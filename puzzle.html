@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Collapse</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js" defer></script>
+  <script src="config.js" defer></script>
+  <script src="game.js" defer></script>
+  <script src="solver.js" defer></script>
+  <script src="puzzle.js" defer></script>
+
+  <style>
+    body {
+      margin: 0;
+      background-color: #c0c0c0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    /* Always-present button row — keeps canvas position stable */
+    #btn-area {
+      width: 400px;
+      height: 52px;
+      order: 2;
+      position: relative;
+    }
+
+    #btn-area button {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 8px 28px;
+      font-size: 15px;
+      font-family: 'Roboto', sans-serif;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      background: #e4e4e4;
+      visibility: hidden;
+    }
+
+    #btn-area button:hover {
+      background: #d0d0d0;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="btn-area">
+    <button id="btn-next">Next</button>
+    <button id="btn-retry">Retry</button>
+  </div>
+</body>
+
+</html>

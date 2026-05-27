@@ -8,7 +8,8 @@ class Box {
     }
 
     draw(gridI, gridJ) {
-        if (this.y < 1) return;
+        if (this.y < 0) return;
+        if (this.n === 0) return;
         fill(boxColors[this.n]);
         noStroke();
         square(this.x + 1, this.y + 1, S - 2);
@@ -46,7 +47,7 @@ class Box {
 // ============================================================================
 
 class NumberGrid {
-    constructor(w, h, seed = Date.now(), moves = "", skipAnimation = false) {
+    constructor(w, h, seed = Date.now(), moves = "", skipAnimation = false, options = {}) {
         this.w = w;
         this.h = h;
         this.score = 0;
@@ -55,12 +56,15 @@ class NumberGrid {
         this.state = seed % m;
         this.moves = [];
         this.maxGen = 3;
+        this.noRefill = options.noRefill ?? false;
+        this.offsetX = options.offsetX ?? X;
+        this.offsetY = options.offsetY ?? Y;
 
         for (let i = 0; i < this.w; i++) {
             this[i] = [];
             for (let j = 0; j < this.h; j++) {
-                const boxX = X + S * i;
-                const boxY = Y + S * (this.h - 1 - j);
+                const boxX = this.offsetX + S * i;
+                const boxY = this.offsetY + S * (this.h - 1 - j);
                 this[i].push(new Box(0, boxX, boxY));
             }
         }
@@ -144,7 +148,7 @@ class NumberGrid {
         for (let i = 0; i < this.w; i++) {
             for (let j = 0; j < this.h; j++) {
                 const box = this[i][j];
-                const targetY = Y + S * (this.h - 1 - j);
+                const targetY = this.offsetY + S * (this.h - 1 - j);
 
                 if (box.y < targetY || box.vy !== 0) {
                     if (skipAnim) {
@@ -177,12 +181,23 @@ class NumberGrid {
             this[i] = this[i].filter((b) => b.n !== 0);
             let removedCount = this.h - this[i].length;
 
-            for (let k = 0; k < removedCount; k++) {
-                const boxX = X + S * i;
-                const boxY = Y - S * (k + 1);
-                this.state = (this.state * a + c) % m;
-                let n = floor((this.maxGen * this.state) / m) + 1;
-                this[i].push(new Box(n, boxX, boxY));
+            if (!this.noRefill) {
+                // Normal mode: drop new random tiles in from above
+                for (let k = 0; k < removedCount; k++) {
+                    const boxX = this.offsetX + S * i;
+                    const boxY = this.offsetY - S * (k + 1);
+                    this.state = (this.state * a + c) % m;
+                    let n = floor((this.maxGen * this.state) / m) + 1;
+                    this[i].push(new Box(n, boxX, boxY));
+                }
+            } else {
+                // No-refill mode: pad with invisible n=0 placeholders at their settled positions
+                let existingCount = this[i].length;
+                for (let k = 0; k < removedCount; k++) {
+                    const boxX = this.offsetX + S * i;
+                    const boxY = this.offsetY + S * (this.h - 1 - (existingCount + k));
+                    this[i].push(new Box(0, boxX, boxY));
+                }
             }
         }
     }
@@ -244,6 +259,7 @@ class NumberGrid {
     do(i, j) {
         let box = this[i][j]
         let n = box.n;
+        if (n === 0) return 0;
         if (n > 5) {
             // 6-tiles cannot be clicked/collapsed
             return 0;
@@ -329,8 +345,8 @@ class NumberGrid {
     }
 
     getCoordinates(mx, my) {
-        let i = floor((mx - X) / S);
-        let j = floor((my - Y) / S);
+        let i = floor((mx - this.offsetX) / S);
+        let j = floor((my - this.offsetY) / S);
         return [i, this.h - 1 - j];
     }
 
@@ -382,7 +398,7 @@ class NumberGrid {
                 if (challengeMode === "bottomrow" && j === 0) continue;
                 if (challengeMode === "middlecolumn" && i === 2) continue;
 
-                if (this[i][j].n < 6 && this.getChainWithCoords(i, j)[0].length > 1) {
+                if (this[i][j].n > 0 && this[i][j].n < 6 && this.getChainWithCoords(i, j)[0].length > 1) {
                     return false;
                 }
             }

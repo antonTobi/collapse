@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Collapse Editor</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.js" defer></script>
+  <script src="config.js" defer></script>
+  <script src="game.js" defer></script>
+  <script src="solver.js" defer></script>
+  <script src="editor.js" defer></script>
+
+  <style>
+    body {
+      margin: 0;
+      background-color: #c0c0c0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      gap: 10px;
+    }
+    #toolbar {
+      display: flex;
+      gap: 10px;
+    }
+    #toolbar button {
+      padding: 8px 20px;
+      font-size: 15px;
+      font-family: 'Roboto', sans-serif;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      background: #e4e4e4;
+    }
+    #toolbar button:hover {
+      background: #d0d0d0;
+    }
+    #toolbar label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      font-size: 15px;
+      font-family: 'Roboto', sans-serif;
+      cursor: pointer;
+      border-radius: 4px;
+      background: #e4e4e4;
+      user-select: none;
+    }
+    #toolbar label:hover {
+      background: #d0d0d0;
+    }
+    #chk-hints {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="toolbar">
+    <button id="btn-save">Save</button>
+    <button id="btn-reset">Reset</button>
+    <button id="btn-random">Random puzzle</button>
+    <label><input type="checkbox" id="chk-hints"> Show hints</label>
+  </div>
+</body>
+
+</html>
