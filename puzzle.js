@@ -41,9 +41,18 @@ function setup () {
   document.getElementById('btn-retry').addEventListener('click', () => {
     setGameState('playing')
     restoreInitial()
+    updateResetButton()
     redraw()
   })
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    setGameState('playing')
+    restoreInitial()
+    updateResetButton()
+    redraw()
+  })
+  document.getElementById('btn-share').addEventListener('click', shareCurrentPuzzle)
 
+  updateResetButton()
   noLoop()
 }
 
@@ -79,6 +88,7 @@ function draw () {
   }
 
   if (puzzleGrid.settled) {
+    updateResetButton()
     noLoop()
   }
 }
@@ -92,6 +102,7 @@ function mousePressed () {
   const [i, j] = puzzleGrid.getCoordinates(mouseX, mouseY)
   if (i < 0 || i >= puzzleGrid.w || j < 0 || j >= puzzleGrid.h) return
   puzzleGrid.do(i, j)
+  updateResetButton()
   loop()
 }
 
@@ -115,6 +126,28 @@ function setGameState (state) {
   gameState = state
   document.getElementById('btn-next').style.visibility = state === 'solved' ? 'visible' : 'hidden'
   document.getElementById('btn-retry').style.visibility = state === 'failed' ? 'visible' : 'hidden'
+}
+
+function showToast (msg) {
+  const toast = document.getElementById('toast')
+  toast.textContent = msg
+  toast.classList.add('show')
+  clearTimeout(toast._timer)
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 2200)
+}
+
+function isAtInitialState () {
+  if (!initialState) return true
+  for (let i = 0; i < puzzleGrid.w; i++) {
+    for (let j = 0; j < puzzleGrid.h; j++) {
+      if (puzzleGrid[i][j].n !== initialState[i][j]) return false
+    }
+  }
+  return true
+}
+
+function updateResetButton () {
+  document.getElementById('btn-reset').disabled = isAtInitialState()
 }
 
 // ============================================================================
@@ -189,6 +222,33 @@ function generatePuzzle () {
   if (state === null) return
   applySolverStateToGrid(state)
   initialState = captureState()
-  saveToURL()
+  history.replaceState(null, '', location.pathname)
+  updateResetButton()
   redraw()
+}
+
+function encodeInitialState () {
+  let str = ''
+  for (let i = 0; i < puzzleGrid.w; i++) {
+    for (let j = 0; j < puzzleGrid.h; j++) {
+      str += initialState[i][j]
+    }
+  }
+  return str
+}
+
+function shareCurrentPuzzle () {
+  const encoded = encodeInitialState()
+  const url = location.href.split('?')[0] + '?p=' + encoded
+  try {
+    navigator.clipboard.writeText(url)
+      .then(() => showToast('Copied to clipboard!'))
+      .catch(() => {
+        history.replaceState(null, '', '?p=' + encoded)
+        showToast('URL updated!')
+      })
+  } catch {
+    history.replaceState(null, '', '?p=' + encoded)
+    showToast('URL updated!')
+  }
 }

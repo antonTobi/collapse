@@ -28,6 +28,65 @@
       min-height: 100vh;
     }
 
+    /* Top bar — Reset (left) and Share (right), always visible */
+    #top-area {
+      width: 400px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px;
+      box-sizing: border-box;
+    }
+
+    #top-area button {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      cursor: pointer;
+      color: #444;
+    }
+
+    #top-area button:hover {
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    #btn-reset:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    #btn-reset:disabled:hover {
+      background: transparent;
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-family: 'Roboto', sans-serif;
+      font-size: 14px;
+      pointer-events: none;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+
+    #toast.show {
+      opacity: 1;
+    }
+
     /* Always-present button row — keeps canvas position stable */
     #btn-area {
       width: 400px;
@@ -58,10 +117,31 @@
 </head>
 
 <body>
+  <div id="top-area">
+    <button id="btn-reset" title="Reset">
+      <!-- Rotate counter-clockwise (Lucide rotate-ccw) -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+           fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+        <path d="M3 3v5h5"/>
+      </svg>
+    </button>
+    <button id="btn-share" title="Copy link">
+      <!-- Chain / link icon -->
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+           fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+    </button>
+  </div>
   <div id="btn-area">
     <button id="btn-next">Next</button>
     <button id="btn-retry">Retry</button>
   </div>
+  <div id="toast"></div>
 </body>
 
 </html>

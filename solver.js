@@ -90,7 +90,7 @@ function solveState (state, memo = new Map()) {
 function generateSolverState () {
   const MAX_ATTEMPTS = 10000
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const tileCount = 10 + Math.floor(Math.random() * 6) // 10–15 tiles
+    const tileCount = 10 + Math.floor(Math.random() * 6) // 10-15 tiles
     const positions = Array.from({ length: w * h }, (_, k) => k)
     for (let k = positions.length - 1; k > 0; k--) {
       const r = Math.floor(Math.random() * (k + 1))
