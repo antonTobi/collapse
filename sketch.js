@@ -2092,7 +2092,27 @@ function keyPressed() {
 // ============================================================================
 
 function handleTouchStart(event) {
-    if (!showMenu) return;
+    if (!showMenu) {
+        // Handle gameplay touch on iOS - process the click directly and
+        // prevent the browser from synthesising a mouse event (which may
+        // not fire reliably on iOS when {passive:false} is set).
+        event.preventDefault();
+
+        let touch = event.touches[0];
+        let rect = canvas.elt.getBoundingClientRect();
+        let touchX = touch.clientX - rect.left;
+        let touchY = touch.clientY - rect.top;
+
+        // Temporarily override p5 mouse coords so onClick() works correctly
+        let savedMouseX = mouseX;
+        let savedMouseY = mouseY;
+        mouseX = touchX;
+        mouseY = touchY;
+        onClick();
+        mouseX = savedMouseX;
+        mouseY = savedMouseY;
+        return;
+    }
 
     let touch = event.touches[0];
     let rect = canvas.elt.getBoundingClientRect();

@@ -18,10 +18,13 @@ let gameState = 'playing' // 'playing' | 'solved' | 'failed'
 // ============================================================================
 
 function setup () {
-  createCanvas(w * S, h * S)
+  const cnv = createCanvas(w * S, h * S)
   textAlign(CENTER, CENTER)
   textFont('Roboto')
   strokeWeight(2)
+
+  // Touch support for iOS
+  cnv.elt.addEventListener('touchstart', handlePuzzleTouchStart, { passive: false })
 
   puzzleGrid = new NumberGrid(w, h, 0, '', false, { noRefill: true, offsetY: 0 })
 
@@ -100,6 +103,27 @@ function draw () {
 function mousePressed () {
   if (gameState !== 'playing') return
   const [i, j] = puzzleGrid.getCoordinates(mouseX, mouseY)
+  if (i < 0 || i >= puzzleGrid.w || j < 0 || j >= puzzleGrid.h) return
+  puzzleGrid.do(i, j)
+  updateResetButton()
+  loop()
+}
+
+// ============================================================================
+// Touch Input Handler (for iOS / mobile)
+// ============================================================================
+
+function handlePuzzleTouchStart (event) {
+  // Only intercept touches on the canvas during gameplay
+  if (gameState !== 'playing') return
+
+  event.preventDefault()
+  const touch = event.touches[0]
+  const rect = event.target.getBoundingClientRect()
+  const tx = touch.clientX - rect.left
+  const ty = touch.clientY - rect.top
+
+  const [i, j] = puzzleGrid.getCoordinates(tx, ty)
   if (i < 0 || i >= puzzleGrid.w || j < 0 || j >= puzzleGrid.h) return
   puzzleGrid.do(i, j)
   updateResetButton()
