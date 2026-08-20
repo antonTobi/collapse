@@ -4,6 +4,7 @@
   "description": "Number collapse game.",
   "main": "pentominoes.js",
   "scripts": {
+    "bench": "node bot/run.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Collapse — Bot Spectator</title>
+    <link rel="icon" href="favicon/favicon.ico">
+    <style>
+        :root {
+            --bg: #1d1d1d;
+            --panel: #2a2a2a;
+            --text: #e4e4e4;
+            --muted: #8b8b8b;
+            --accent: #22baac;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 24px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            display: flex;
+            gap: 28px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        h1 { font-size: 18px; margin: 0 0 16px; font-weight: 600; letter-spacing: .04em; }
+
+        #board {
+            position: relative;
+            width: 400px;
+            height: 400px;
+            background: #151515;
+            border-radius: 8px;
+        }
+
+        .tile {
+            position: absolute;
+            width: 76px;
+            height: 76px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 44px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, .9);
+            transition: top .12s ease-out, left .12s ease-out;
+        }
+
+        .tile.clicked { outline: 4px solid #fff; outline-offset: -4px; }
+
+        .tile.pop { animation: pop .22s ease-out; }
+
+        @keyframes pop { from { transform: scale(1.22); } to { transform: scale(1); } }
+
+        .val {
+            position: absolute;
+            bottom: 3px;
+            right: 5px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fff;
+            background: rgba(0, 0, 0, .55);
+            border-radius: 3px;
+            padding: 0 3px;
+        }
+
+        #panel { width: 300px; }
+
+        .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+
+        label { font-size: 13px; color: var(--muted); min-width: 62px; }
+
+        select, input[type=number] {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 5px 7px;
+            font-size: 13px;
+            flex: 1;
+        }
+
+        input[type=range] { flex: 1; accent-color: var(--accent); }
+
+        button {
+            background: var(--panel);
+            color: var(--text);
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 6px 12px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        button:hover { border-color: var(--accent); }
+
+        button.primary { background: var(--accent); color: #10201f; border-color: var(--accent); font-weight: 600; }
+
+        #stats {
+            background: var(--panel);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-top: 16px;
+            font-size: 13px;
+            line-height: 1.9;
+        }
+
+        #stats b { float: right; font-variant-numeric: tabular-nums; }
+
+        #score { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+        #splits { color: var(--muted); font-size: 12px; word-spacing: 4px; margin-top: 6px; min-height: 16px; }
+
+        .over { color: #ee6984; font-weight: 600; }
+
+        .hint { color: var(--muted); font-size: 11px; margin-top: 14px; line-height: 1.6; }
+    </style>
+</head>
+
+<body>
+    <div>
+        <h1>COLLAPSE — BOT SPECTATOR</h1>
+        <div id="board"></div>
+    </div>
+
+    <div id="panel">
+        <div class="row">
+            <label for="agent">Agent</label>
+            <select id="agent"></select>
+        </div>
+        <div class="row">
+            <label for="seed">Seed</label>
+            <input type="number" id="seed" value="1">
+            <button id="dice" title="Random seed">🎲</button>
+        </div>
+        <div class="row">
+            <label for="delay">Delay</label>
+            <input type="range" id="delay" min="0" max="1500" step="25" value="400">
+            <span id="delayLabel" style="width:52px;text-align:right;font-size:12px">400ms</span>
+        </div>
+        <div class="row">
+            <input type="checkbox" id="showValues" style="margin:0 4px 0 0">
+            <label for="showValues" style="min-width:0;color:var(--text)">show move evaluations</label>
+        </div>
+        <div class="row">
+            <button id="play" class="primary">▶ Play</button>
+            <button id="step">Step</button>
+            <button id="reset">Reset</button>
+        </div>
+
+        <div id="stats">
+            <div id="score">0</div>
+            <div id="splits"></div>
+            <hr style="border:none;border-top:1px solid #3a3a3a;margin:10px 0">
+            <div>Moves played <b id="movecount">0</b></div>
+            <div>Legal moves <b id="legalcount">0</b></div>
+            <div>6s created <b id="sixcount">0</b></div>
+            <div>Last move <b id="lastmove">—</b></div>
+            <div id="status"></div>
+        </div>
+
+        <div class="hint">
+            The outlined tile is the one the agent is about to click.
+            "Show move evaluations" prints every candidate move's heuristic value,
+            so you can see what the agent rejected and by how much.
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="bot/engine.js"></script>
+    <script src="bot/eval.js"></script>
+    <script src="bot/ntuple.js"></script>
+    <script src="bot/agents.js"></script>
+    <script src="bot/spectate.js"></script>
+</body>
+
+</html>
