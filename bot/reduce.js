@@ -61,13 +61,15 @@ function mirrorPairs(t) {
         if (taken.has(k)) continue;
         taken.add(k);
         const partner = bySet.get(setKey(mcellsOf(k)));
-        if (partner === undefined || partner === k) { out.push({ keep: k, drop: -1, perm: null }); continue; }
-        taken.add(partner);
-        // cells[partner][i] === mcells[k][perm[i]]
+        if (partner === undefined) { out.push({ keep: k, fold: -1, perm: null }); continue; }
+        if (partner !== k) taken.add(partner);
+        // cells[partner][i] === mcells[k][perm[i]]. When partner === k this is
+        // the tuple's own internal mirror permutation, and folding its table
+        // against itself is what lets the reader take one entry instead of two.
         const mk = mcellsOf(k), cp = cellsOf(partner);
         const perm = cp.map(c => mk.indexOf(c));
         if (perm.some(p => p < 0)) throw new Error('tuple ' + k + ' and ' + partner + ' do not cover the same cells');
-        out.push({ keep: k, drop: partner, perm });
+        out.push({ keep: k, fold: partner, perm });
     }
     return out;
 }
@@ -93,7 +95,7 @@ function main() {
         console.error(`no reduced set "${setName}" is defined in ntuple.js for "${src.setName}"`);
         process.exit(1);
     }
-    const dst = new NTuple.Network(undefined, Object.assign({}, src.meta, { set: setName }));
+    const dst = new NTuple.Network(undefined, Object.assign({}, src.meta, { set: setName, selfOnce: true }));
     if (dst.t.n !== pairs.length) {
         console.error(`reduced set has ${dst.t.n} tuples but the reduction produced ${pairs.length}`);
         process.exit(1);
@@ -105,8 +107,8 @@ function main() {
             const len = t.len[p.keep], size = Math.pow(V, len);
             const from = so + t.wbase[p.keep], to = dobase + dst.t.wbase[r];
             for (let i = 0; i < size; i++) dst.w[to + i] = src.w[from + i];
-            if (p.drop >= 0) {
-                const other = so + t.wbase[p.drop];
+            if (p.fold >= 0) {
+                const other = so + t.wbase[p.fold];
                 for (let i = 0; i < size; i++) dst.w[to + i] += src.w[other + permuteIndex(i, len, p.perm)];
             }
         });
@@ -114,6 +116,25 @@ function main() {
 
     // The only claim worth making is that the two networks agree, so check it on
     // boards a real game produces rather than on anything convenient.
+    // Evaluate the source the way it was trained -- every tuple read twice --
+    // rather than through src.value(), whose behaviour depends on the source
+    // file's own header. The whole claim is that this equals the reduced net.
+    const st = src.t;
+    function sourceValue(cells) {
+        const bank = src.stages > 1 ? src.stageOf(cells) * src.bank : 0;
+        let sum = 0;
+        for (let k = 0; k < st.n; k++) {
+            const o = st.off[k], l = st.len[k], b = bank + st.wbase[k];
+            let a = 0, m = 0;
+            for (let c = 0; c < l; c++) {
+                a = a * V + cells[st.cells[o + c]];
+                m = m * V + cells[st.mcells[o + c]];
+            }
+            sum += src.w[b + a] + src.w[b + m];
+        }
+        return sum;
+    }
+
     const agent = require('./agents.js').createAgent('td:weights=' + args.in, { seed: 1 });
     let worst = 0, scale = 0, checked = 0;
     for (let seed = 1; seed <= 8; seed++) {
@@ -121,7 +142,7 @@ function main() {
         while (!g.gameOver && g.moves.length < 600) {
             for (const m of g.legalMoves()) {
                 const a = g.preview(m[0], m[1], Collapse.FILL_NONE).cells;
-                const x = src.value(a), y = dst.value(a);
+                const x = sourceValue(a), y = dst.value(a);
                 worst = Math.max(worst, Math.abs(x - y));
                 scale = Math.max(scale, Math.abs(x));
                 checked++;

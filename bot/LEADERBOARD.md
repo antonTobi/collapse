@@ -350,6 +350,12 @@ alpha 0.1 -> 0.03, lambda 0.5 -> 0, benchmarked greedy over 300 games:
 | `lean` = squares + 5-runs + crosses | 51 | 388 k | 438 | 4961 | -481 +- 82 | 0.041 |
 | `bigx5` = `bigx` without the 2x3 blocks | 71 | 436 k | 598 | 4904 | -537 +- 81 | 0.050 |
 
+And once the dominoes are there, do the 2x3 blocks still earn 86% of the weight
+table and 33% of the reads? Yes: `domsx` (`doms` without them) scores 5977
+against `doms`'s 6426, **-449 +- 71**, on the same protocol. At equal episodes
+they are clearly worth keeping; at equal wall-clock it is closer, since dropping
+them buys about 1.4x the episodes, and that comparison has not been run.
+
 Three things fall out of that table.
 
 **Deleting the contained tuples costs score.** `lean` keeps the 5-runs and drops
@@ -405,6 +411,64 @@ cells in a different order. `bot/reduce.js` does it and checks the result:
 **Identical play: 0W 100D 0L at depth 2, mean difference +0 +- 0**, and the two
 networks agree to 1.5e-4 on 50 045 real afterstates (float32 rounding). 40% of
 the reads and 40% of the memory were doing nothing at all.
+
+### And the self-mirrored ones can be read once too
+
+17 of the 56 survivors are their own mirror -- a full-width row, anything centred
+on the middle column. Their two readings are the same cells in a different
+order, so the *same table* gets updated at both indices on every step and ends up
+internally symmetric: measured, w[x] and w[mirror x] agree to **0.12% RMS**. The
+second read returns a number the first one already had.
+
+Taking the smaller of the two indices once is exact, and the canonicalisation is
+what keeps the value mirror-invariant: both orderings land on the same entry, so
+nothing has to be tied by training. It is worth **7%** of an evaluation on the
+reduced sets and 12% on the full one -- real, but small enough that it is opt-in
+(`selfOnce` in the file header) rather than a silent change to what every
+existing weight file means. `reduce.js` sets it and folds the tables to match.
+
+Greedy on the 7-bank network ends up at 0.090 ms/move against the original's
+0.175, a **1.95x** speedup for bit-identical play.
+
+## Where to put the bank boundaries does not matter
+
+Two schemes for five 6-count banks, grown from the *same* well-trained 1-bank
+network (self-play 6438) so neither pays a cold start, then trained for the same
+300 000 episodes on the same seeds and benchmarked greedy over 400 games:
+
+| edges | banks cover | data share | mean |
+| ----- | ----------- | ---------- | ---: |
+| `3,6,9,12` (evenly spaced in 6-count) | 0-2 / 3-5 / 6-8 / 9-11 / 12+ | 40/29/16/10/5 | 7767 |
+| `2,3,5,8` (equal share of positions) | 0-1 / 2 / 3-4 / 5-7 / 8+ | 20/12/20/28/20 | 7755 |
+
+**-12 +- 76.** Nothing. Equal data share and even strategic spacing are
+indistinguishable, so the choice can be made on whichever is easier to reason
+about -- which is the evenly spaced one.
+
+What *does* matter is having the banks at all: both score **+1634 +- 64** over
+the 1-bank network they were grown from. That is far larger than the earlier
+3-bank to 7-bank result (+66, not significant), and the difference is instructive
+-- 1 to 5 is a real split of a well-trained table, while 3 to 7 was subdividing
+banks that had not separated yet.
+
+### Feeding the thin banks deliberately
+
+A late bank is thin because a game spends little time there, not because the
+positions are unimportant. `starts.js --min-move N` samples the pool from late
+positions only, which aims the training distribution wherever it is wanted.
+Share of positions per bank with `--edges 3,6,9,12`:
+
+| pool | b0 | b1 | b2 | b3 | b4 |
+| ---- | -: | -: | -: | -: | -: |
+| normal play | 40.0% | 28.6% | 16.4% | 9.7% | 5.3% |
+| `--min-move 300` | 13.6% | 41.1% | 23.6% | 14.0% | 7.6% |
+| `--min-move 500` | 0.0% | 36.0% | 33.4% | 19.9% | 10.7% |
+| `--min-move 700` | 0.0% | 2.2% | 45.6% | 33.9% | 18.3% |
+| `--min-move 900` | 0.0% | 0.0% | 6.2% | 41.7% | 52.1% |
+
+The endgame bank goes from 5% of the data to 52%. So a bank layout does not have
+to be chosen to match how a game happens to spend its time -- the data can be
+moved to fit the layout instead.
 
 ## Choosing what to bank on
 

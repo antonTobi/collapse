@@ -65,7 +65,10 @@ function main() {
     const stages = args.stages || src.sixBanks;
 
     const five = args.five || src.five;
-    const dst = new NTuple.Network(undefined, { set, sym: src.sym, stages, edges, five });
+    // Every property that changes what a table of weights *means* has to be
+    // carried across, or the copy is bit-perfect and the function still differs.
+    const dst = new NTuple.Network(undefined,
+        { set, sym: src.sym, stages, edges, five, selfOnce: src.selfOnce });
 
     const srcT = NTuple.tupleSet(src.setName), dstT = NTuple.tupleSet(set);
     if (!isPrefix(srcT, dstT)) {

@@ -228,7 +228,9 @@ file was trained:
   count by three.
 
 Every set `X` has a mirror-reduced twin `Xr` with half the tuples and the same
-expressive power — see LEADERBOARD.md. Train `Xr` from zeros, or convert a
+expressive power, and `selfOnce` in the file header reads the self-mirrored
+tuples once rather than twice — together about 1.95x on evaluation for bit-
+identical play. See LEADERBOARD.md. Train `Xr` from zeros, or convert a
 trained `X` with `bot/reduce.js`. The fastest path from the current network:
 
 ```bash

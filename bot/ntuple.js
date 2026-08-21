@@ -117,7 +117,11 @@
         // each is visited constantly and generalises over everything else on
         // the board. Every domino already sits inside a 2x2 or a run, so it
         // adds no representational power at all -- only speed of learning.
-        doms: () => squares().concat(runs(4), runs(5), blocks(2, 3), blocks(3, 2), crosses(), runs(2))
+        doms: () => squares().concat(runs(4), runs(5), blocks(2, 3), blocks(3, 2), crosses(), runs(2)),
+        // `doms` without the 2x3/3x2 blocks: they are 86% of the weight table and
+        // 33% of the reads, so whether they still earn that once the dominoes
+        // are present is worth its own measurement.
+        domsx: () => squares().concat(runs(4), runs(5), crosses(), runs(2))
     };
 
     // With `sym` on, the mirror of a tuple is another tuple in these sets, and
@@ -153,6 +157,14 @@
     function pack(tuples) {
         const n = tuples.length;
         const off = new Int32Array(n), len = new Int32Array(n), wbase = new Int32Array(n);
+        // A tuple whose mirror is itself -- a full-width row, anything centred on
+        // the middle column. Its two readings are the same cells in a different
+        // order, so its table ends up internally symmetric (w[x] == w[mirror x],
+        // measured at 0.1% RMS on the trained network) and the two reads return
+        // the same number. Reading the smaller of the two indices once is
+        // therefore exact, and it is the symmetry that makes it safe: the value
+        // stays mirror-invariant because both orderings map to the same entry.
+        const selfMir = new Int8Array(n);
         let cellCount = 0;
         for (let t = 0; t < n; t++) cellCount += tuples[t].length;
         const cells = new Int32Array(cellCount), mcells = new Int32Array(cellCount);
@@ -160,10 +172,17 @@
         for (let t = 0; t < n; t++) {
             off[t] = c; len[t] = tuples[t].length; wbase[t] = total;
             for (const k of tuples[t]) { cells[c] = k; mcells[c] = mirrorCell(k); c++; }
+            const own = tuples[t].slice().sort((a, b) => a - b).join(',');
+            const mir = tuples[t].map(mirrorCell).sort((a, b) => a - b).join(',');
+            selfMir[t] = own === mir ? 1 : 0;
             total += Math.pow(V, tuples[t].length);
         }
-        return { n, off, len, wbase, cells, mcells, size: total };
+        return { n, off, len, wbase, cells, mcells, selfMir, size: total };
     }
+
+    // Stands in for selfMir when the optimisation is off, so the hot loop keeps
+    // the same shape either way.
+    const NO_SELF = new Int8Array(256);
 
     const packed = {};
     function tupleSet(name) {
@@ -211,12 +230,23 @@
                     '" x ' + this.stages + ' stage(s) needs ' + need);
             }
             this.w = weights || new Float32Array(need);
+            // Opt-in, because it changes what a given table of weights means: a
+            // self-mirrored tuple contributes one term instead of two. Files
+            // trained without it keep their old semantics, and bot/reduce.js
+            // produces files that have it (folding each pair of entries into
+            // one as it goes).
+            this.selfOnce = !!o.selfOnce && this.sym;
+            this.self = this.selfOnce ? this.t.selfMir : NO_SELF;
+            let sc = 0;
+            if (this.selfOnce) for (let k = 0; k < this.t.n; k++) sc += this.t.selfMir[k];
+            this.selfCount = sc;
         }
 
         get meta() {
             const m = { set: this.setName, sym: this.sym, stages: this.stages };
             if (this.edges) m.edges = this.edges.slice();
             if (this.five) m.five = true;
+            if (this.selfOnce) m.selfOnce = true;
             return m;
         }
 
@@ -278,7 +308,7 @@
         }
 
         value(cells) {
-            const t = this.t, w = this.w, sym = this.sym;
+            const t = this.t, w = this.w, sym = this.sym, self = this.self;
             const bank = this.stages > 1 ? this.stageOf(cells) * this.bank : 0;
             let sum = 0;
             for (let k = 0; k < t.n; k++) {
@@ -288,17 +318,21 @@
                     a = a * V + cells[t.cells[o + c]];
                     if (sym) m = m * V + cells[t.mcells[o + c]];
                 }
-                sum += w[b + a];
-                if (sym) sum += w[b + m];
+                if (!sym) { sum += w[b + a]; continue; }
+                if (self[k]) sum += w[b + (a < m ? a : m)];   // one entry, both orderings
+                else sum += w[b + a] + w[b + m];
             }
             return sum;
         }
 
-        // Spread one error over the tuples that produced the estimate.
+        // Spread one error over the tuples that produced the estimate. A
+        // self-mirrored tuple contributes one term rather than two, so it takes
+        // one share rather than two -- otherwise its weights would move at twice
+        // the rate of everything else.
         update(cells, delta) {
-            const t = this.t, w = this.w, sym = this.sym;
+            const t = this.t, w = this.w, sym = this.sym, self = this.self;
             const bank = this.stages > 1 ? this.stageOf(cells) * this.bank : 0;
-            const d = delta / (sym ? 2 * t.n : t.n);
+            const d = delta / (sym ? 2 * t.n - this.selfCount : t.n);
             for (let k = 0; k < t.n; k++) {
                 const o = t.off[k], l = t.len[k], b = bank + t.wbase[k];
                 let a = 0, m = 0;
@@ -306,8 +340,9 @@
                     a = a * V + cells[t.cells[o + c]];
                     if (sym) m = m * V + cells[t.mcells[o + c]];
                 }
-                w[b + a] += d;
-                if (sym) w[b + m] += d;
+                if (!sym) { w[b + a] += d; continue; }
+                if (self[k]) w[b + (a < m ? a : m)] += d;
+                else { w[b + a] += d; w[b + m] += d; }
             }
         }
     }
