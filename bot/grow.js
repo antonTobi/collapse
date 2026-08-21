@@ -30,7 +30,7 @@ const Collapse = require('./engine.js');
 const NTuple = require('./ntuple.js');
 
 function parseArgs(argv) {
-    const a = { in: null, out: null, set: null, stages: 0, edges: null };
+    const a = { in: null, out: null, set: null, stages: 0, edges: null, five: false };
     for (let i = 2; i < argv.length; i++) {
         const k = argv[i];
         if (k === '--in') a.in = argv[++i];
@@ -38,6 +38,7 @@ function parseArgs(argv) {
         else if (k === '--set') a.set = argv[++i];
         else if (k === '--stages') a.stages = parseInt(argv[++i], 10);
         else if (k === '--edges') a.edges = argv[++i].split(',').map(x => parseInt(x, 10));
+        else if (k === '--five') a.five = true;
         else { console.error('unknown option ' + k); process.exit(1); }
     }
     if (!a.in || !a.out) { console.error('--in and --out are required'); process.exit(1); }
@@ -61,31 +62,42 @@ function main() {
     const src = NTuple.load(args.in);
     const set = args.set || src.setName;
     const edges = args.edges || (args.stages ? null : src.edges);
-    const stages = edges ? edges.length + 1 : (args.stages || src.stages);
+    const stages = args.stages || src.sixBanks;
 
-    const dst = new NTuple.Network(undefined, { set, sym: src.sym, stages, edges });
+    const five = args.five || src.five;
+    const dst = new NTuple.Network(undefined, { set, sym: src.sym, stages, edges, five });
 
     const srcT = NTuple.tupleSet(src.setName), dstT = NTuple.tupleSet(set);
     if (!isPrefix(srcT, dstT)) {
         console.error(`set "${src.setName}" is not a prefix of set "${set}" — cannot grow into it`);
         process.exit(1);
     }
-    if (stages < src.stages) {
-        console.error(`cannot go from ${src.stages} stages down to ${stages}`);
+    if (dst.stages < src.stages) {
+        console.error(`cannot go from ${src.stages} banks down to ${dst.stages}`);
         process.exit(1);
     }
 
-    // Both networks index their banks by 6-count, so a destination bank
-    // inherits from whichever source bank covers the same part of the game.
-    // Splitting one bank into several always starts them identical, which is
-    // what makes the growth free. When the boundaries move, a destination bank
-    // spanning two source banks takes the earlier one, so the copy is exact for
-    // the lowest 6-count in the bank and approximate above it -- which is why
-    // the check below reports the worst disagreement rather than assuming zero.
-    for (let s = 0; s < stages; s++) {
-        let sixes = 0;
-        for (let k = 0; k <= 24; k++) if (dst.bankFor(k) === s) { sixes = k; break; }
-        const from = src.bankFor(sixes);
+    // Both networks index their banks by (6-count, 5-group-count), so a
+    // destination bank inherits from whichever source bank covers the same part
+    // of the game. Splitting one bank into several always starts them identical,
+    // which is what makes the growth free -- adding the 5-group dimension turns
+    // each bank into three copies of itself, and adding stage edges splits a
+    // 6-count range in two.
+    //
+    // When boundaries move rather than subdivide, a destination bank can span
+    // two source banks; it takes the first one it matches, so the copy is exact
+    // there and approximate elsewhere. That is why the check below reports the
+    // worst disagreement instead of assuming it is zero.
+    const claimed = new Array(dst.stages).fill(-1);
+    for (let sixes = 0; sixes <= 24; sixes++) {
+        for (let fives = 0; fives <= 2; fives++) {
+            const to = dst.bankFor(sixes, fives);
+            if (claimed[to] >= 0) continue;
+            claimed[to] = src.bankFor(sixes, fives);
+        }
+    }
+    for (let s = 0; s < dst.stages; s++) {
+        const from = Math.max(0, claimed[s]);
         dst.w.set(src.w.subarray(from * src.bank, (from + 1) * src.bank), s * dst.bank);
     }
 
@@ -107,14 +119,20 @@ function main() {
     // is never exercised is a bank whose copy was never checked. Sweep the whole
     // range explicitly.
     for (let sixes = 0; sixes <= 16; sixes++) {
-        const cells = new Uint8Array(25);
-        for (let k = 0; k < 25; k++) cells[k] = k < sixes ? 6 : (k % 5) + 1;
-        worst = Math.max(worst, Math.abs(dst.value(cells) - src.value(cells)));
-        checked++;
+        for (let fives = 0; fives <= 3; fives++) {
+            const cells = new Uint8Array(25);
+            for (let k = 0; k < 25; k++) cells[k] = k < sixes ? 6 : (k % 5) + 1;
+            // scatter `fives` isolated 5s into cells the 6s do not occupy
+            let put = 0;
+            for (let k = 24; k >= sixes && put < fives; k -= 2) { cells[k] = 5; put++; }
+            worst = Math.max(worst, Math.abs(dst.value(cells) - src.value(cells)));
+            checked++;
+        }
     }
     // Only an unchanged bank layout guarantees an identical function; moving
     // the boundaries is allowed but has to be reported honestly.
-    const sameLayout = JSON.stringify(src.edges) === JSON.stringify(dst.edges) || src.stages === 1;
+    const sameLayout = (JSON.stringify(src.edges) === JSON.stringify(dst.edges) || src.stages === 1)
+        && (src.five === dst.five || !src.five);
     if (worst > 1e-4 && sameLayout) {
         console.error('grown network does not match the original (max diff ' + worst + ') — not writing');
         process.exit(1);
@@ -122,7 +140,8 @@ function main() {
 
     NTuple.save(args.out, dst);
     console.log(`${args.in}  set=${src.setName} stages=${src.stages} weights=${src.w.length}`);
-    console.log(`${args.out}  set=${set} stages=${stages} weights=${dst.w.length}`);
+    console.log(`${args.out}  set=${set} stages=${dst.stages}` + (five ? ' (x3 by 5-groups)' : '') +
+        ` weights=${dst.w.length}`);
     console.log(`identical on ${checked} boards (max |dV| = ${worst})`);
 }
 

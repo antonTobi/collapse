@@ -29,7 +29,7 @@ function parseArgs(argv) {
         seedBase: 2000000, report: 5000, decay: 1, maxMoves: 20000, jobs: 8,
         set: 'base', stages: 1, sym: false, alphaEnd: 0, lambda: 0,
         searchDepth: 1, searchCap: 16, searchCapDeep: 4, searchTopk: 2, searchRootk: 6,
-        lambdaEnd: -1
+        lambdaEnd: -1, starts: null, startFrac: 0.5
     };
     for (let i = 2; i < argv.length; i++) {
         const k = argv[i];
@@ -38,6 +38,8 @@ function parseArgs(argv) {
         else if (k === '--alpha-end') a.alphaEnd = parseFloat(argv[++i]);
         else if (k === '--lambda') a.lambda = parseFloat(argv[++i]);
         else if (k === '--lambda-end') a.lambdaEnd = parseFloat(argv[++i]);
+        else if (k === '--starts') a.starts = argv[++i];
+        else if (k === '--start-frac') a.startFrac = parseFloat(argv[++i]);
         else if (k === '--out') a.out = argv[++i];
         else if (k === '--resume') a.resume = argv[++i];
         else if (k === '--seed-base') a.seedBase = parseInt(argv[++i], 10);
@@ -60,22 +62,29 @@ function parseArgs(argv) {
 // ---- worker ---------------------------------------------------------------
 
 if (!isMainThread) {
-    const { sab, meta, args, index } = workerData;
+    const { sab, meta, args, index, starts } = workerData;
     const weights = new Float32Array(sab);
     const net = new NTuple.Network(weights, meta);
 
     // Best (reward + V(afterstate)) from a position. null when terminal.
+    //
+    // This goes through search.js's expander rather than Game.preview, and the
+    // difference is not small: preview -> apply recomputes gameOver with a full
+    // legal-move scan, which is 25 flood fills per candidate move that a
+    // training step immediately throws away. One components() pass finds every
+    // chain at once and the afterstates land in a preallocated buffer. Same
+    // moves, same values, ~1.6x the episodes per hour.
+    const expander = Search.makeExpander();
     function best(game) {
-        const moves = game.legalMoves();
-        if (!moves.length) return null;
-        let bv = -Infinity, bm = null, bafter = null, br = 0;
-        for (const m of moves) {
-            const after = game.preview(m[0], m[1], Collapse.FILL_NONE);
-            const r = after.score - game.score;
-            const v = r + net.value(after.cells);
-            if (v > bv) { bv = v; bm = m; bafter = after.cells; br = r; }
+        const nm = expander.expand(game.cells, game.maxGen);
+        if (nm === 0) return null;
+        let bv = -Infinity, bs = 0;
+        for (let s = 0; s < nm; s++) {
+            const v = expander.gain(s) + net.value(expander.board(s));
+            if (v > bv) { bv = v; bs = s; }
         }
-        return { move: bm, cells: bafter, reward: br, value: bv };
+        const k = expander.cell(bs);
+        return { move: [(k / 5) | 0, k % 5], cells: expander.board(bs), reward: expander.gain(bs), value: bv };
     }
 
     // With --search-depth > 1 the behaviour policy is the expectimax agent
@@ -116,11 +125,32 @@ if (!isMainThread) {
     // lambda-return instead.
     const trail = [];
 
+    // Positions sampled from search play, to start some episodes from. See
+    // bot/starts.js for why. A seeded episode is a real episode in every way
+    // except that its score is the score from that point on, so it is reported
+    // separately and kept out of the self-play mean.
+    const pool = starts ? new Uint8Array(starts) : null;
+    const poolSize = pool ? pool.length / 25 : 0;
+    let rngState = (index * 2246822519 + 374761393) >>> 0;
+    function nextRandom() {
+        rngState ^= rngState << 13; rngState >>>= 0;
+        rngState ^= rngState >>> 17;
+        rngState ^= rngState << 5; rngState >>>= 0;
+        return rngState / 4294967296;
+    }
+
     parentPort.on('message', msg => {
         if (msg.stop) process.exit(0);
-        const scores = [];
+        const scores = [], seededScores = [];
         for (let e = 0; e < msg.count; e++) {
-            const game = new Collapse.Game(msg.seedBase + e);
+            const seeded = poolSize > 0 && nextRandom() < args.startFrac;
+            let game;
+            if (seeded) {
+                const at = ((nextRandom() * poolSize) | 0) * 25;
+                game = Collapse.fromCells(pool.subarray(at, at + 25), msg.seedBase + e);
+            } else {
+                game = new Collapse.Game(msg.seedBase + e);
+            }
             let cur = bestMove(game);
             trail.length = 0;
             while (cur && game.moves.length < args.maxMoves) {
@@ -140,9 +170,9 @@ if (!isMainThread) {
                     net.update(trail[t].cells, msg.alpha * carry);
                 }
             }
-            scores.push(game.score);
+            (seeded ? seededScores : scores).push(game.score);
         }
-        parentPort.postMessage({ index, scores });
+        parentPort.postMessage({ index, scores, seeded: seededScores.length });
     });
 }
 
@@ -166,6 +196,17 @@ async function main() {
     if (initial) weights.set(initial);
     const net = new NTuple.Network(weights, meta);   // main-thread view, for saving
 
+    // Shared so ten workers do not each hold a copy.
+    let startPool = null;
+    if (args.starts) {
+        const cells = require('./starts.js').load(args.starts);
+        const sb = new SharedArrayBuffer(cells.length);
+        new Uint8Array(sb).set(cells);
+        startPool = sb;
+        console.log('start pool: ' + (cells.length / 25).toLocaleString() + ' positions from ' +
+            args.starts + ', used for ' + (100 * args.startFrac).toFixed(0) + '% of episodes');
+    }
+
     console.log('network: set=' + meta.set + ' sym=' + meta.sym + ' stages=' + (meta.stages || 1) +
         ' weights=' + size + '  jobs=' + args.jobs + '  lambda=' + args.lambda +
         (args.searchDepth > 1 ? '  behaviour=expectimax depth ' + args.searchDepth : ''));
@@ -173,10 +214,10 @@ async function main() {
     const chunk = Math.max(1, Math.round(args.report / args.jobs / 4));
     const workers = [];
     for (let k = 0; k < args.jobs; k++) {
-        workers.push(new Worker(__filename, { workerData: { sab, meta, args, index: k } }));
+        workers.push(new Worker(__filename, { workerData: { sab, meta, args, index: k, starts: startPool } }));
     }
 
-    let issued = 0, done = 0, lastReport = 0;
+    let issued = 0, done = 0, lastReport = 0, seededDone = 0;
     const window = [];
     const t0 = Date.now();
 
@@ -206,14 +247,16 @@ async function main() {
         let live = workers.length;
         for (const w of workers) {
             w.on('message', m => {
-                done += m.scores.length;
+                done += m.scores.length + m.seeded;
+                seededDone += m.seeded;
                 for (const s of m.scores) window.push(s);
                 while (window.length > 4000) window.shift();
                 if (done - lastReport >= args.report) {
                     lastReport = done;
                     const mean = window.reduce((a, b) => a + b, 0) / window.length;
                     const secs = (Date.now() - t0) / 1000;
-                    console.log('ep ' + done + '  mean(last ' + window.length + ') ' + mean.toFixed(0) +
+                    console.log('ep ' + done + (seededDone ? ' (' + seededDone + ' seeded)' : '') +
+                        '  mean(last ' + window.length + ') ' + mean.toFixed(0) +
                         '  alpha ' + alphaAt(done / args.episodes).toFixed(4) +
                         (args.lambda > 0 ? '  lambda ' + lambdaAt(done / args.episodes).toFixed(3) : '') +
                         '  ' + secs.toFixed(0) + 's  ' + (done / secs).toFixed(0) + ' ep/s');

@@ -249,6 +249,26 @@
         }
     }
 
+    // Build a game sitting at a given position rather than at the start of a
+    // fresh one. `maxGen` cannot be recovered from the board in general, but it
+    // can here: it only ever rises to 4 when a 4 is created, and a 4 can only
+    // leave the board by becoming a 5, which can only leave by becoming a 6. So
+    // the generator is still on 3 exactly when no tile above 3 is present.
+    // Used for training from sampled positions and for probing one position.
+    function fromCells(cells, seed) {
+        const g = new Game(seed || 1);
+        g.cells.set(cells);
+        let max = 0;
+        for (let k = 0; k < W * H; k++) if (g.cells[k] > max) max = g.cells[k];
+        g.maxGen = max > 3 ? 4 : 3;
+        g.score = 0;
+        g.moves = [];
+        g.scoreSplits = [];
+        g.lastCreated = -1;
+        g.gameOver = !g.hasLegalMove();
+        return g;
+    }
+
     // Play a full game with an agent. Returns a result summary.
     // agent.chooseMove(game) -> [i, j]
     function playGame(agent, seed, options) {
@@ -273,5 +293,5 @@
         };
     }
 
-    return { Game, playGame, W, H, FILL_RANDOM, FILL_SIX, FILL_NONE, FILL_SAMPLE, ALPHABET };
+    return { Game, playGame, fromCells, W, H, FILL_RANDOM, FILL_SIX, FILL_NONE, FILL_SAMPLE, ALPHABET };
 });

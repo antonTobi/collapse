@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Collapse — Tuple Shapes</title>
+    <link rel="icon" href="../favicon/favicon.ico">
+    <style>
+        :root {
+            --bg: #1d1d1d;
+            --panel: #2a2a2a;
+            --text: #e4e4e4;
+            --muted: #8b8b8b;
+            --accent: #22baac;
+            --off: #343434;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 28px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            max-width: 1180px;
+            margin-inline: auto;
+        }
+
+        h1 { font-size: 18px; margin: 0 0 4px; font-weight: 600; letter-spacing: .04em; }
+        h2 { font-size: 14px; margin: 0; font-weight: 600; }
+        p { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 8px 0 0; }
+
+        .bar { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; margin: 20px 0 4px; }
+        label { color: var(--muted); font-size: 13px; }
+
+        select {
+            background: var(--panel); color: var(--text); border: 1px solid #3a3a3a;
+            border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px;
+        }
+
+        .totals { color: var(--muted); font-size: 13px; }
+        .totals b { color: var(--text); font-weight: 600; }
+
+        section { margin-top: 26px; }
+
+        .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+        .count { color: var(--accent); font-size: 13px; font-variant-numeric: tabular-nums; }
+        .note { color: var(--muted); font-size: 12px; }
+
+        .row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+        /* one 5x5 board; j = 0 is the bottom row, so rows are emitted top-down */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(5, 12px);
+            grid-template-rows: repeat(5, 12px);
+            gap: 2px;
+            padding: 5px;
+            background: var(--panel);
+            border-radius: 5px;
+        }
+
+        .grid.big { grid-template-columns: repeat(5, 20px); grid-template-rows: repeat(5, 20px); gap: 3px; }
+
+        .c { background: var(--off); border-radius: 2px; }
+        .c.on { background: var(--accent); }
+
+        .heat {
+            display: grid;
+            grid-template-columns: repeat(5, 34px);
+            grid-template-rows: repeat(5, 34px);
+            gap: 3px; padding: 6px; background: var(--panel); border-radius: 6px;
+            width: max-content;
+        }
+
+        .heat div {
+            border-radius: 3px; display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-variant-numeric: tabular-nums; color: #0c0c0c; font-weight: 600;
+        }
+
+        .side { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+        .side p { max-width: 480px; margin-top: 0; }
+    </style>
+</head>
+
+<body>
+    <h1>COLLAPSE — TUPLE SHAPES</h1>
+    <p>Which cells each tuple of the value network reads. Every distinct shape is
+        listed once with all of its placements. Read straight from
+        <code>ntuple.js</code>, so it cannot go stale.</p>
+
+    <div class="bar">
+        <label>Tuple set <select id="set"></select></label>
+        <span class="totals" id="totals"></span>
+    </div>
+
+    <section>
+        <div class="head">
+            <h2>Cell coverage</h2>
+            <span class="note">how many tuples read each cell</span>
+        </div>
+        <div class="side">
+            <div class="heat" id="heat"></div>
+            <p id="coverNote"></p>
+        </div>
+    </section>
+
+    <div id="shapes"></div>
+
+    <script src="ntuple.js"></script>
+    <script>
+        const NT = window.CollapseNTuple;
+        const W = 5, H = 5;
+
+        const el = id => document.getElementById(id);
+
+        // k = i * H + j, i = column from the left, j = row with 0 at the BOTTOM.
+        function gridFor(cells, big) {
+            const on = new Set(cells);
+            const g = document.createElement('div');
+            g.className = 'grid' + (big ? ' big' : '');
+            for (let j = H - 1; j >= 0; j--) {
+                for (let i = 0; i < W; i++) {
+                    const d = document.createElement('div');
+                    d.className = 'c' + (on.has(i * H + j) ? ' on' : '');
+                    g.appendChild(d);
+                }
+            }
+            return g;
+        }
+
+        // Two placements are the same shape when their cells agree after
+        // translating to the origin.
+        function shapeKey(cells) {
+            const ij = cells.map(k => [(k / H) | 0, k % H]);
+            const mi = Math.min(...ij.map(c => c[0])), mj = Math.min(...ij.map(c => c[1]));
+            return ij.map(([i, j]) => (i - mi) + ',' + (j - mj)).sort().join(' ');
+        }
+
+        function describe(cells) {
+            const ij = cells.map(k => [(k / H) | 0, k % H]);
+            const w = Math.max(...ij.map(c => c[0])) - Math.min(...ij.map(c => c[0])) + 1;
+            const h = Math.max(...ij.map(c => c[1])) - Math.min(...ij.map(c => c[1])) + 1;
+            const n = cells.length;
+            if (w === 1) return `vertical run of ${n}`;
+            if (h === 1) return `horizontal run of ${n}`;
+            if (n === w * h) return w === h ? `${w}x${h} square` : `${w} wide x ${h} tall block`;
+            // the cross family: a plus inside, a T on an edge, an L in a corner
+            if (n === 5 && w === 3 && h === 3) return 'plus (cell + all four neighbours)';
+            if (n === 4) return 'T (edge cell + its three neighbours)';
+            if (n === 3) return 'L (corner cell + its two neighbours)';
+            return `${n} cells in ${w}x${h}`;
+        }
+
+        function render(setName) {
+            const t = NT.tupleSet(setName);
+            const tuples = [];
+            for (let k = 0; k < t.n; k++) {
+                const cells = [];
+                for (let c = 0; c < t.len[k]; c++) cells.push(t.cells[t.off[k] + c]);
+                tuples.push(cells);
+            }
+
+            const lookups = tuples.reduce((a, c) => a + c.length, 0);
+            el('totals').innerHTML =
+                `<b>${t.n}</b> tuples &nbsp;·&nbsp; <b>${t.size.toLocaleString()}</b> weights per bank ` +
+                `&nbsp;·&nbsp; <b>${lookups}</b> cell reads per evaluation (doubled when the mirror is read)`;
+
+            // coverage
+            const cover = new Array(W * H).fill(0);
+            for (const c of tuples) for (const k of c) cover[k]++;
+            const max = Math.max(...cover), min = Math.min(...cover);
+            const heat = el('heat');
+            heat.innerHTML = '';
+            for (let j = H - 1; j >= 0; j--) {
+                for (let i = 0; i < W; i++) {
+                    const v = cover[i * H + j];
+                    const d = document.createElement('div');
+                    d.textContent = v;
+                    const f = (v - min) / Math.max(1, max - min);
+                    d.style.background = `hsl(174 68% ${18 + 42 * f}%)`;
+                    d.style.color = f > 0.55 ? '#0c0c0c' : '#cfcfcf';
+                    heat.appendChild(d);
+                }
+            }
+            el('coverNote').textContent =
+                `Corners are read by ${cover[0]} tuples and the centre by ${cover[2 * H + 2]}. ` +
+                `Rectangular shapes cannot straddle an edge, so the border is always thinner — ` +
+                `which is worth knowing, because the corners and edges are where 6s end up.`;
+
+            // group placements by shape, keeping the order the tuple set defines
+            const byShape = new Map();
+            for (const cells of tuples) {
+                const key = shapeKey(cells);
+                if (!byShape.has(key)) byShape.set(key, []);
+                byShape.get(key).push(cells);
+            }
+
+            const out = el('shapes');
+            out.innerHTML = '';
+            for (const [, placements] of byShape) {
+                const n = placements[0].length;
+                const sec = document.createElement('section');
+                const head = document.createElement('div');
+                head.className = 'head';
+                head.innerHTML = `<h2>${describe(placements[0])}</h2>` +
+                    `<span class="count">x${placements.length}</span>` +
+                    `<span class="note">${n} cells · ${Math.pow(7, n).toLocaleString()} weights each ` +
+                    `· ${(placements.length * Math.pow(7, n)).toLocaleString()} total</span>`;
+                sec.appendChild(head);
+
+                const row = document.createElement('div');
+                row.className = 'row';
+                row.appendChild(gridFor(placements[0], true));
+                for (let p = 1; p < placements.length; p++) row.appendChild(gridFor(placements[p]));
+                sec.appendChild(row);
+                out.appendChild(sec);
+            }
+        }
+
+        const sel = el('set');
+        for (const name of Object.keys(NT.SETS)) {
+            const o = document.createElement('option');
+            o.value = o.textContent = name;
+            sel.appendChild(o);
+        }
+        sel.value = 'bigx';
+        sel.addEventListener('change', () => render(sel.value));
+        render(sel.value);
+    </script>
+</body>
+
+</html>

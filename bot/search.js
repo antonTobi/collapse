@@ -33,7 +33,11 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 
     const W = 5, H = 5, N = W * H;
-    const MAX_MOVES = 16;      // canonical moves never approach this
+    // 25 cells, so at most 25 canonical moves. The comment that used to be here
+    // said "canonical moves never approach 16", which was wrong: real positions
+    // reach 19, and 1.6% of them have more than 16, where `expand` was silently
+    // dropping the last few moves it found.
+    const MAX_MOVES = 25;
     const LEVELS = 24;
 
     // --- connected components ----------------------------------------------
@@ -85,6 +89,48 @@
         return n * len;
     }
 
+    // One position's worth of move expansion, with its own scratch space.
+    // The searcher keeps one of these per tree level; the trainer keeps one.
+    // Having a single implementation is the point: the trainer used to go
+    // through Game.preview, which re-runs a full legal-move scan inside apply()
+    // just to set gameOver, and that scan is 25 flood fills a training step
+    // throws away.
+    function makeExpander() {
+        const after = new Uint8Array(N * MAX_MOVES);
+        const gain = new Int32Array(MAX_MOVES);
+        const nextGen = new Int32Array(MAX_MOVES);
+        const cell = new Int32Array(MAX_MOVES);
+        const scratch = new Uint8Array(N);
+        let n = 0;
+
+        return {
+            get count() { return n; },
+            gain(s) { return gain[s]; },
+            nextGen(s) { return nextGen[s]; },
+            cell(s) { return cell[s]; },
+            board(s) { return after.subarray(s * N, s * N + N); },
+            copy(s) { return after.slice(s * N, s * N + N); },
+
+            // Every canonical legal move of `cells`. Returns how many.
+            expand(cells, maxGen) {
+                components(cells);
+                n = 0;
+                for (let k = 0; k < N; k++) {
+                    const v = cells[k];
+                    if (v < 1 || v > 5) continue;
+                    if (csize[lbl[k]] < 2) continue;
+                    if (k % H > 0 && cells[k - 1] === v) continue;   // lowest of a vertical run
+                    gain[n] = collapseInto(cells, k, scratch);
+                    after.set(scratch, n * N);
+                    cell[n] = k;
+                    nextGen[n] = (v + 1 === 4) ? 4 : maxGen;
+                    if (++n === MAX_MOVES) break;
+                }
+                return n;
+            }
+        };
+    }
+
     function makeSearcher(net, opts) {
         const o = opts || {};
         const depth = o.depth || 2;
@@ -119,53 +165,26 @@
         // and the noise here is worst exactly for the widest chains, so plain
         // sampling systematically over-rates collapsing a big group.
         const MAX_BUDGET = 2048;
-        const afterBuf = [], fillBuf = [], gains = [], mgs = [], mkeys = [], holes = [];
-        const shallow = [], order = [], strat = [];
+        const exp = [], fillBuf = [], holes = [], shallow = [], order = [], strat = [];
         for (let l = 0; l < LEVELS; l++) {
-            afterBuf.push(new Uint8Array(N * MAX_MOVES));
+            exp.push(makeExpander());
             fillBuf.push(new Uint8Array(N));
-            gains.push(new Int32Array(MAX_MOVES));
-            mgs.push(new Int32Array(MAX_MOVES));
-            mkeys.push(new Int32Array(MAX_MOVES));
             holes.push(new Int32Array(N));
             shallow.push(new Float64Array(MAX_MOVES));
             order.push(new Int32Array(MAX_MOVES));
             strat.push(new Uint8Array(N * MAX_BUDGET));
         }
-        const scratch = new Uint8Array(N);
-
-        // Expand every canonical legal move of `cells` into level `lv`'s slots.
-        // Returns how many there were.
-        function expand(cells, maxGen, lv) {
-            components(cells);
-            const buf = afterBuf[lv], g = gains[lv], mg = mgs[lv], mk = mkeys[lv];
-            let nm = 0;
-            for (let k = 0; k < N; k++) {
-                const v = cells[k];
-                if (v < 1 || v > 5) continue;
-                if (csize[lbl[k]] < 2) continue;
-                const j = k % H;
-                if (j > 0 && cells[k - 1] === v) continue;      // canonical: lowest of a vertical run
-                const gain = collapseInto(cells, k, scratch);
-                buf.set(scratch, nm * N);
-                g[nm] = gain;
-                mg[nm] = (v + 1 === 4) ? 4 : maxGen;
-                mk[nm] = k;
-                if (++nm === MAX_MOVES) break;
-            }
-            return nm;
-        }
 
         function maxValue(cells, maxGen, d, lv) {
-            const nm = expand(cells, maxGen, lv);
+            const e = exp[lv];
+            const nm = e.expand(cells, maxGen);
             if (nm === 0) return 0;                       // dead: no future score
-            const buf = afterBuf[lv], g = gains[lv], mg = mgs[lv];
             let best = -Infinity;
 
             if (d <= 1) {
                 for (let s = 0; s < nm; s++) {
-                    const view = buf.subarray(s * N, s * N + N);
-                    const v = g[s] + net.value(view) + (leaf ? leaf(view) : 0);
+                    const view = e.board(s);
+                    const v = e.gain(s) + net.value(view) + (leaf ? leaf(view) : 0);
                     if (v > best) best = v;
                 }
                 return best;
@@ -175,8 +194,8 @@
             // that could plausibly be the max.
             const sh = shallow[lv], ord = order[lv];
             for (let s = 0; s < nm; s++) {
-                const view = buf.subarray(s * N, s * N + N);
-                sh[s] = g[s] + net.value(view) + (leaf ? leaf(view) : 0);
+                const view = e.board(s);
+                sh[s] = e.gain(s) + net.value(view) + (leaf ? leaf(view) : 0);
                 ord[s] = s;
             }
             let keep = nm;
@@ -191,8 +210,7 @@
             }
             for (let a = 0; a < keep; a++) {
                 const s = ord[a];
-                const view = buf.subarray(s * N, s * N + N);
-                const v = g[s] + chanceValue(view, mg[s], d - 1, lv + 1);
+                const v = e.gain(s) + chanceValue(e.board(s), e.nextGen(s), d - 1, lv + 1);
                 if (v > best) best = v;
             }
             return best;
@@ -251,15 +269,15 @@
 
         // Root: score every legal move of a live Game.
         function scoreMoves(game) {
-            const nm = expand(game.cells, game.maxGen, 0);
-            const buf = afterBuf[0], g = gains[0], mg = mgs[0], mk = mkeys[0];
+            const e = exp[0];
+            const nm = e.expand(game.cells, game.maxGen);
             const out = [];
             for (let s = 0; s < nm; s++) {
-                const view = buf.subarray(s * N, s * N + N);
-                const k = mk[s];
+                const view = e.board(s);
+                const k = e.cell(s);
                 out.push({
                     move: [(k / H) | 0, k % H],
-                    value: g[s] + net.value(view) + (leaf ? leaf(view) : 0),
+                    value: e.gain(s) + net.value(view) + (leaf ? leaf(view) : 0),
                     slot: s
                 });
             }
@@ -269,8 +287,7 @@
                 deep = out.slice().sort((p, q) => q.value - p.value).slice(0, rootk);
             }
             for (const r of deep) {
-                const view = buf.subarray(r.slot * N, r.slot * N + N);
-                r.value = g[r.slot] + chanceValue(view, mg[r.slot], depth - 1, 1);
+                r.value = e.gain(r.slot) + chanceValue(e.board(r.slot), e.nextGen(r.slot), depth - 1, 1);
             }
             return out;
         }
@@ -278,5 +295,5 @@
         return { scoreMoves };
     }
 
-    return { makeSearcher, components, collapseInto };
+    return { makeSearcher, makeExpander, components, collapseInto };
 });

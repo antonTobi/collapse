@@ -12,6 +12,8 @@ Headless implementation of the game plus a place to develop and benchmark agents
 | `harness.js` | Worker pool used by the tuning and fitting scripts. |
 | `search.js` | Expectimax over the value network: max nodes on full boards, chance nodes over the tiles that drop into the holes. |
 | `grow.js` | Copy a trained network into a bigger architecture (more tuples, more stage banks) without changing what it computes. |
+| `starts.js` | Sample positions from search play, for training episodes to start from. |
+| `tuples.html` | Every tuple shape the network reads, drawn on a board. Open it directly; it reads `ntuple.js`, so it cannot go stale. |
 | `probe.js` | Play one position out many times per candidate move, to settle an argument about a single move. |
 | `tune.js` | Weight tuning by playing games: 1-D sweeps, coordinate ascent, random-direction climbing. |
 | `train.js` | TD(0) self-play training of the value network, single process. |
@@ -216,7 +218,13 @@ file was trained:
   (70 tuples, 3.1M weights).
 * `--sym` — also read the left-right mirrored board, sharing one table. Mirroring
   is an exact symmetry of the rules, so this doubles the data per weight for free.
-* `--stages` — separate weight banks by how many 6s are on the board.
+* `--stages` / `--edges` — separate weight banks by how many 6s are on the
+  board. `--edges 2,4,6,8,10,12` puts 0-1 sixes in the first bank, 2-3 in the
+  next, and so on; without edges the 0..16 range is split evenly, which sounds
+  fair and is not (see LEADERBOARD.md).
+* `--five` on `grow.js` — a second, independent banking dimension: how many
+  separate groups of 5s are on the board, capped at 2+. It multiplies the bank
+  count by three.
 
 ```bash
 node bot/ptrain.js --jobs 10 --set big --sym --episodes 2000000 --out bot/weights/mine.bin
@@ -293,6 +301,29 @@ This matters because both of those architectures had been measured and rejected
 from a cold start, where they have to pay for their extra parameters out of the
 same training budget. Grown into, they cost nothing, and every episode
 afterwards goes into the new capacity.
+
+The exactness check at the end is not decoration — it caught a real bug in the
+bank mapping the first time the 5-group dimension was added. Growth is only free
+when the destination's tuple list starts with the source's *and* its bank edges
+refine the source's; `grow.js` refuses to write when the copy does not reproduce
+the original.
+
+## Training from search-visited positions
+
+```bash
+node bot/starts.js --agent "fx:weights=bot/weights/bigx-s7.bin,depth=2,cap=8,rootk=4"     --games 300 --jobs 10 --out bot/data/starts.bin
+node bot/ptrain.js --jobs 10 --resume W.bin --starts bot/data/starts.bin --start-frac 0.4 ...
+```
+
+The network is trained on the states 1-ply greedy self-play reaches and deployed
+on the states depth-3 search reaches, which are ~200 moves longer and a six
+deeper. Training *with* search fixes that and costs ~25x the episodes (measured:
+6 ep/s against 170), which is the wrong trade when episodes are the scarce
+resource. This buys the same coverage once: play a few hundred games with the
+search agent, keep the positions, and start a fraction of episodes from them.
+
+Seeded episodes score from their starting position rather than from zero, so
+they are counted separately and kept out of the reported self-play mean.
 
 Files written before the header existed are read as `base`, one stage, and need
 `sym=true` in the spec if they were trained symmetric.

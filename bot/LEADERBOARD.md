@@ -266,6 +266,116 @@ file — a bigger tuple set and stage banks both losing from a cold start and
 winning when grown into — the pattern is that **most of these knobs are not good
 or bad, they are good at one point in training and bad at another.**
 
+## What an evaluation costs, and what is actually in it
+
+Everything below was measured on the 87 MB network over real afterstates.
+
+| network | weights | size | lookups/eval | ns/eval | ns/lookup |
+| ------- | ------: | ---: | -----------: | ------: | --------: |
+| `base`, 1 bank | 86 k | 0.3 MB | 288 | 692 | 2.4 |
+| `big`, 1 bank | 3.1 M | 12 MB | 676 | 2439 | 3.6 |
+| `bigx`, 1 bank | 3.3 M | 12 MB | 886 | 2946 | 3.3 |
+| `bigx`, 3 banks | 9.8 M | 37 MB | 886 | 3115 | 3.5 |
+| `bigx`, 7 banks | 22.8 M | 87 MB | 886 | 3628 | 4.1 |
+| `bigx`, 14 banks | 45.6 M | 174 MB | 886 | 4542 | 5.1 |
+
+**Cost tracks lookups, not weights.** A 6-cell tuple and a 4-cell tuple are the
+same runtime cost and the 6-cell one holds 49x more weights; banks add no
+lookups at all and cost only cache pressure, 7x the memory for 16% more time.
+So halving the weight count is only worth doing if you halve the *tuples*.
+
+A training step, per move: **36.6 us**, of which under 9 us is everything except
+table lookups — move generation, collapse, gravity, bookkeeping. That is the
+answer to "would another language be faster": a rewrite could address a fifth of
+the time, and the other four fifths is waiting on random reads into an 87 MB
+array, which C does at the same speed. What *was* available was 1.5x from the
+trainer still going through `Game.preview` — `apply` recomputes `gameOver` with
+a full legal-move scan, 25 flood fills per candidate that a training step throws
+away. Routing it through `search.js`'s expander took 53-70 us/move down to 36.6
+with bit-identical play (verified at alpha 0, where both play the same games).
+
+### What each tuple group contributes
+
+Over 7029 real decisions, the spread of each group's contribution across the
+sibling moves in one decision — i.e. how much it can move the ranking:
+
+| group | tuples | weights | share of table | spread | removing it flips the choice |
+| ----- | -----: | ------: | -------------: | -----: | ---------------------------: |
+| 2x2 squares | 16 | 38 k | 1% | 165 | 80% |
+| runs of 4 | 20 | 48 k | 1% | 184 | 79% |
+| runs of 5 | 10 | 168 k | 5% | 66 | 58% |
+| 2x3 blocks | 12 | 1.41 M | 43% | 49 | 51% |
+| 3x2 blocks | 12 | 1.41 M | 43% | 58 | 52% |
+| crosses | 25 | 181 k | 6% | 25 | 28% |
+
+(spread of the full value across siblings: 276)
+
+The 6-cell blocks are 86% of the table and the smallest influence per weight.
+The tempting conclusion is wrong, though: the crosses have the *lowest* spread
+of anything here and measurably added +311 when they were introduced. Spread
+measures how loudly a group speaks, not whether it is needed. The 6-cell blocks
+are most likely undertrained, which is the same story as `big` looking worse than
+`base` at 200 000 episodes.
+
+### The banks are nearly duplicates
+
+Pairwise correlation between the seven banks: **0.986 to 1.000**. As RMS
+difference over a bank's own RMS spread, banks split from the same parent differ
+by **0.01-0.02** and banks from different parents by **0.17-0.20**. After 400 000
+episodes the 7-bank network is still a 3-bank network stored seven times. That is
+not an argument against the split — it is what "recently grown" looks like — but
+it does mean the memory is currently mostly redundancy.
+
+## Choosing what to bank on
+
+Two candidate replacements for the 6-count, measured over 13 844 real positions.
+
+**Playable area — redundant.** The idea: a 1-5 tile sealed on all sides by walls
+and 6s is effectively a 6 too, so what matters is not how many 6s there are but
+how much *connected playable area* is left, counted as adjacent pairs of non-6
+tiles. It is a better description of the position, and it carries no extra
+information at all:
+
+| 6s | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| -- | -: | -: | -: | -: | -: | -: | -: | -: | -: |
+| mean playable pairs | 40.0 | 38.0 | 36.0 | 33.8 | 32.0 | 31.0 | 29.0 | 27.0 | 25.0 |
+| sd within that 6-count | 0.00 | 0.00 | 0.00 | 0.41 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+
+Correlation with the 6-count: **-0.9989**, and the conditional spread is exactly
+zero at nearly every 6-count. The reason is the agent itself: it already tucks
+every 6 against a wall or another 6, so each new 6 removes the same number of
+pairs every time. The metric would separate a well-played board from a badly
+played one, and the agent does not produce badly played boards.
+
+**Groups of 5s — orthogonal.** Correlation with the 6-count **-0.06**, and a
+useful split: 12% of positions have no 5, 50% have one group, 38% have two or
+more, and those proportions hold across the whole game. That is what a second
+banking dimension has to look like.
+
+`--five` on `grow.js` adds it, multiplying the bank count by three. The cost is
+not zero: the group count has to be computed on every evaluation, and doing it
+by flood fill cost 34%. Counting it by Euler characteristic instead (cells minus
+adjacencies plus filled 2x2 squares, one straight pass) brings that to **16%**.
+That count is not exact — a ring of 5s around a hole comes out one low, on 12
+boards in 200 000 — and it does not need to be. A bank is a partition, not an
+answer; all that matters is that the same board always lands in the same bank.
+
+**A dedicated opening bank is cheap but nearly pointless.** Before any 4 exists
+the rules genuinely differ (the generator draws 1-3, not 1-4), and the condition
+is exactly detectable from the board — no tile above 3 means no 4 was ever made,
+because a 4 can only leave the board by becoming a 5 and a 5 by becoming a 6
+(verified: 0 mismatches in 13 844 positions, and `Collapse.fromCells` relies on
+it). But that phase is **0.49% of positions**, about the first five moves. Its
+own table would train fine, since with no tile above 3 only a small corner of
+each tuple's state space is reachable — it just has very little to decide.
+
+The arithmetic that constrains all of this: banks **multiply** the weight table
+and **divide** the training data. Seven 6-count bins times three 5-group buckets
+is 21 banks, 261 MB, and a smallest bank holding 0.8% of positions. Three bins
+times three buckets is 9 banks, 112 MB, smallest bank 3.4% — the same order of
+dilution as today's 7 banks (smallest 5.3%) but partitioned along an axis the
+6-count knows nothing about. That is the version worth testing.
+
 ## The stage banks were splitting the wrong thing
 
 `stageOf` originally split the 0..16 range of 6-counts into equal-width bands.
@@ -738,6 +848,17 @@ agent on the same seeds.
 | Ensembling the 1-stage and 3-stage networks | −299 ± 98 at 2.5x the cost. They share a lineage, so their mistakes are the same mistakes |
 | The exposed-6 rule as a hard override | −196 to −226. As a soft override (`sixeps=10`) it is exactly neutral: +11 ± 29 |
 | `--lambda 0.85` | unstable; oscillates by 2000 points between reports |
+| Banking on playable area instead of the 6-count | correlates -0.999 with the 6-count in real play; the same information |
+| Skipping the search when the 1-ply gap is large | no safe threshold exists; see the table above |
+
+**A bug worth the embarrassment.** `search.js` capped a position's move list at
+16 with a comment claiming canonical moves never approach that. Real positions
+reach 19, and 1.6% of them have more than 16, so `expand` was silently dropping
+the last moves it found. Fixing it is worth +14 +- 47 — nothing — but the way it
+was found is the lesson: a single 100-seed run of the fixed version looked 141
+points *worse*, and only a paired comparison showed the truth. Changing anything
+that alters 1.6% of decisions makes 85% of games diverge completely, so
+comparing two separate runs measures divergence, not the change.
 
 ### Fine-tuning on the search policy's trajectories
 
