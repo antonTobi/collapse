@@ -141,18 +141,28 @@
             <button id="dice" title="Random seed">🎲</button>
         </div>
         <div class="row">
-            <label for="delay">Delay</label>
+            <label for="delay">Speed</label>
             <input type="range" id="delay" min="0" max="1500" step="25" value="400">
             <span id="delayLabel" style="width:52px;text-align:right;font-size:12px">400ms</span>
+        </div>
+        <div class="row">
+            <label for="scrub">Move</label>
+            <input type="range" id="scrub" min="0" max="0" value="0">
+            <span id="frameLabel" style="width:74px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums">0 / 0</span>
         </div>
         <div class="row">
             <input type="checkbox" id="showValues" style="margin:0 4px 0 0">
             <label for="showValues" style="min-width:0;color:var(--text)">show move evaluations</label>
         </div>
         <div class="row">
+            <button id="first" title="First move (Home)">⏮</button>
+            <button id="back" title="Step back (←)">◀</button>
             <button id="play" class="primary">▶ Play</button>
-            <button id="step">Step</button>
-            <button id="reset">Reset</button>
+            <button id="step" title="Step forward (→)">▶</button>
+            <button id="last" title="Last move (End)">⏭</button>
+        </div>
+        <div class="row">
+            <button id="reset">Replay this seed</button>
         </div>
 
         <div id="stats">
@@ -167,9 +177,18 @@
         </div>
 
         <div class="hint">
-            The outlined tile is the one the agent is about to click.
-            "Show move evaluations" prints every candidate move's heuristic value,
-            so you can see what the agent rejected and by how much.
+            The whole game is played out headlessly the moment you pick a seed, then
+            loaded as a replay. Scrub with the slider, step with ← and →, jump with
+            Home and End. The outlined tile is the move the agent plays <em>next</em>
+            from the position on screen.
+            "Show move evaluations" prints every candidate move's value at the current
+            position, so you can see what the agent rejected and by how much.
+            <br><br>
+            Agents marked <b>net</b> use the learned value function and fetch a
+            weights file, so this page has to be served over http for them
+            (<code>npx serve</code> in the repo root, then open
+            <code>/spectate.html</code>). The hand-weighted agents work from a
+            plain <code>file://</code> path.
         </div>
     </div>
 
@@ -177,6 +196,7 @@
     <script src="bot/engine.js"></script>
     <script src="bot/eval.js"></script>
     <script src="bot/ntuple.js"></script>
+    <script src="bot/search.js"></script>
     <script src="bot/agents.js"></script>
     <script src="bot/spectate.js"></script>
 </body>

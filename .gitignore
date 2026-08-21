@@ -18,3 +18,12 @@ package-lock.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Trained network weights are build artifacts, not source: `ptrain.js` and
+# `grow.js` regenerate them, and the big ones are tens of megabytes each.
+# bot/weights/big-td.bin (12 MB) is committed so the spectator and the
+# reproduction commands in bot/README.md work from a fresh clone.
+bot/weights/big-s3-final.bin
+bot/weights/bigx-*.bin
+bot/weights/*snap*.bin
+bot/weights/frozen*.bin

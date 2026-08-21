@@ -17,7 +17,7 @@ const Collapse = require('./engine.js');
 const { createAgent, agentNames } = require('./agents.js');
 
 function parseArgs(argv) {
-    const args = { agents: ['random', 'maxmoves'], seeds: 25, seedBase: 1, verbose: false, jobs: 1, json: false };
+    const args = { agents: ['random', 'maxmoves'], seeds: 25, seedBase: 1, verbose: false, jobs: 1, json: false, dist: 0 };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--agents') args.agents = argv[++i].split(/,(?![^:]*=)/).map(s => s.trim()).filter(Boolean);
@@ -25,6 +25,10 @@ function parseArgs(argv) {
         else if (a === '--seed-base') args.seedBase = parseInt(argv[++i], 10);
         else if (a === '--jobs') args.jobs = parseInt(argv[++i], 10);
         else if (a === '--json') args.json = true;
+        // --dist N adds the shape of the distribution: the tails, and how often
+        // the agent clears N. Mean alone hides whether an agent got there by
+        // being reliable or by being lucky.
+        else if (a === '--dist') args.dist = parseInt(argv[++i], 10);
         else if (a === '--verbose' || a === '-v') args.verbose = true;
         else if (a === '--list') { console.log(agentNames().join('\n')); process.exit(0); }
         else { console.error('Unknown option: ' + a); process.exit(1); }
@@ -37,7 +41,13 @@ function stats(xs) {
     const n = sorted.length;
     const mean = xs.reduce((s, x) => s + x, 0) / n;
     const sd = Math.sqrt(xs.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, n - 1));
-    return { mean, sd, se: sd / Math.sqrt(n), median: n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2, min: sorted[0], max: sorted[n - 1] };
+    const q = p => sorted[Math.min(n - 1, Math.max(0, Math.round(p * (n - 1))))];
+    return {
+        mean, sd, se: sd / Math.sqrt(n),
+        median: n % 2 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2,
+        min: sorted[0], max: sorted[n - 1], p10: q(0.1), p90: q(0.9),
+        over: t => xs.filter(x => x >= t).length / n
+    };
 }
 
 // Run one agent over a list of seeds. Returns [{seed, score, moves, sixes, ms}]
@@ -105,9 +115,10 @@ async function main() {
 
     const nameWidth = Math.max(12, ...args.agents.map(a => a.length));
     console.log(`\n${args.seeds} games per agent (seeds ${seeds[0]}-${seeds[seeds.length - 1]})\n`);
+    const distHead = args.dist ? pad('sd', 7) + pad('p10', 8) + pad('p90', 8) + pad('≥' + args.dist, 8) : '';
     console.log('  ' + 'agent'.padEnd(nameWidth) + pad('mean', 9) + pad('±se', 7) + pad('median', 9) +
-        pad('min', 8) + pad('max', 8) + pad('moves', 8) + pad('6s', 6) + pad('ms/move', 10) + pad('s/game', 9));
-    console.log('  ' + '-'.repeat(nameWidth + 74));
+        pad('min', 8) + pad('max', 8) + distHead + pad('moves', 8) + pad('6s', 6) + pad('ms/move', 10) + pad('s/game', 9));
+    console.log('  ' + '-'.repeat(nameWidth + 74 + (args.dist ? 31 : 0)));
     for (const spec of args.agents) {
         const rs = results[spec];
         const s = stats(rs.map(r => r.score));
@@ -115,8 +126,11 @@ async function main() {
         const sixes = stats(rs.map(r => r.sixes));
         const totalMs = rs.reduce((a, r) => a + r.ms, 0);
         const totalMoves = rs.reduce((a, r) => a + r.moves, 0);
+        const distRow = args.dist
+            ? pad(s.sd.toFixed(0), 7) + pad(s.p10, 8) + pad(s.p90, 8) + pad((100 * s.over(args.dist)).toFixed(0) + '%', 8)
+            : '';
         console.log('  ' + spec.padEnd(nameWidth) + pad(s.mean.toFixed(0), 9) + pad(s.se.toFixed(0), 7) +
-            pad(s.median.toFixed(0), 9) + pad(s.min, 8) + pad(s.max, 8) +
+            pad(s.median.toFixed(0), 9) + pad(s.min, 8) + pad(s.max, 8) + distRow +
             pad(moves.mean.toFixed(1), 8) + pad(sixes.mean.toFixed(1), 6) +
             pad((totalMs / totalMoves).toFixed(3), 10) + pad((totalMs / rs.length / 1000).toFixed(3), 9));
     }

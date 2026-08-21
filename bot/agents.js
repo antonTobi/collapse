@@ -22,11 +22,11 @@
 
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
-        module.exports = factory(require('./engine.js'), require('./eval.js'), require('./ntuple.js'));
+        module.exports = factory(require('./engine.js'), require('./eval.js'), require('./ntuple.js'), require('./search.js'));
     } else {
-        root.CollapseAgents = factory(root.Collapse, root.CollapseEval, root.CollapseNTuple);
+        root.CollapseAgents = factory(root.Collapse, root.CollapseEval, root.CollapseNTuple, root.CollapseSearch);
     }
-})(typeof self !== 'undefined' ? self : this, function (Collapse, Ev, NTuple) {
+})(typeof self !== 'undefined' ? self : this, function (Collapse, Ev, NTuple, Search) {
 
     const { FILL_NONE, FILL_SIX, FILL_SAMPLE } = Collapse;
 
@@ -59,14 +59,46 @@
         // against walls and 6s (`new5blocked`, `fiveblocked`) rather than left
         // in open board. With those present, keeping the 5s in one group
         // (`comp5`) finally pays too; on its own it never did.
-        v4: { moves: 0.70661, pairs: 0.86982, made: -17.49946, made4: 1.24, made5: 2.48571, made6: -1, gain: 0.23437, comp5: -1.20366, singles: 0.7149, sixopen: -4.12201, trapped: 0.73439, heightsum: -0.0652, lowtiles: -0.38185, sixes: 2.44063, cnt1: -1.12, cnt3: -0.45455, cnt4: -0.1625, cnt5: -0.76, distinct: 0.625, s_moves: 0.05882, s_made: 0.06786, s_sixopen: 0.3, new5blocked: 0.63678, fiveblocked: 0.54391, fournear5: 0.23182 }
+        v4: { moves: 0.70661, pairs: 0.86982, made: -17.49946, made4: 1.24, made5: 2.48571, made6: -1, gain: 0.23437, comp5: -1.20366, singles: 0.7149, sixopen: -4.12201, trapped: 0.73439, heightsum: -0.0652, lowtiles: -0.38185, sixes: 2.44063, cnt1: -1.12, cnt3: -0.45455, cnt4: -0.1625, cnt5: -0.76, distinct: 0.625, s_moves: 0.05882, s_made: 0.06786, s_sixopen: 0.3, new5blocked: 0.63678, fiveblocked: 0.54391, fournear5: 0.23182 },
+        // h1: not tuned by playing at all -- fitted by bot/fit.js to which move
+        // strong humans chose, over the 1831 replays scoring 6000+. One gradient
+        // sets all 45 weights at once from 100k real decisions, instead of one
+        // axis at a time against a noisy game mean, which is why it reaches
+        // v4's level in minutes rather than hours.
+        h1: { moves: 0.70661, pairs: 9.52882, made: -21.82548, made3: 15.96336, made4: 23.62997, made5: -62.11384, made6: -36.16061, gain: -0.13075, comp4: -10.34639, comp5: -15.33058, singles: 9.54933, sixopen: -22.13343, trapped: -2.19205, heightsum: -0.16771, lowtiles: 4.06426, sixes: -36.16061, chain: 1.79651, cnt1: -10.88994, cnt2: -6.78763, cnt3: 1.21821, cnt4: 2.39909, cnt5: 0.05238, iso: -2.76318, pairlo: 4.99425, pairhi: -4.99356, distinct: -8.47303, gen4: -27.88141, chain5: -1.30217, chainlow: 5.56417, s_moves: 0.0643, s_pairs: 0.68012, s_made: 0.04841, s_sixopen: 1.03591, s_gain: 0.00943, s_heightsum: -0.09317, new5bond: 26.9321, new5colgap: -6.05424, new5blocked: 22.53527, fivebond: -4.85985, fiveblocked: 3.28176, fivecols: 0.81931, fivespan: 0.33844, fivemax: -1.39534, fournear5: 0.78087 },
+        // h2: coordinate ascent from h1, 400 games on seeds 10001-10400. Kept
+        // as a warning, not as an improvement: it gained +197 on the seeds it
+        // was tuned on and LOST 169 +- 109 on 300 held-out ones. Forty-five
+        // features x 2 directions x 3 rounds is a lot of selection against a
+        // +-69 estimate, and what it selected was mostly noise. h1 is the
+        // better agent; see LEADERBOARD.md.
+        h2: { moves: 0.70661, pairs: 9.77732, made: -21.82544, made3: 16.9634, made4: 23.87, made5: -62.11371, made6: -35.6808, gain: -0.13076, comp4: -10.34636, comp5: -15.33052, singles: 9.54933, sixopen: -23.16385, trapped: -2.19217, heightsum: -0.16771, lowtiles: 4.82801, sixes: -33.65369, chain: 1.7965, cnt1: -10.8899, cnt2: -6.33309, cnt3: 1.21818, cnt4: 2.39912, cnt5: 0.0524, iso: -2.76317, pairlo: 4.99425, pairhi: -4.99357, distinct: -8.473, gen4: -22.88133, chain5: -1.30214, chainlow: 5.5642, s_moves: 0.15253, s_pairs: 0.68012, s_made: 0.04841, s_sixopen: 0.77728, s_gain: 0.00162, s_heightsum: -0.09317, new5bond: 26.93221, new5colgap: -6.05438, new5blocked: 22.53515, fivebond: -4.85983, fiveblocked: 3.28175, fivecols: 1.3468, fivespan: -0.19929, fivemax: -1.39534, fournear5: 0.78088 }
     };
 
     // Curated specs for the spectator dropdown: full specs (so the preset is
-    // never ambiguous), best first, and only agents that run in the browser --
-    // `td`/`blend` need a weights file from disk.
+    // never ambiguous), best first, labelled with their seeds 1-100 mean.
+    // Entries with `weights` need that file fetched before the agent can be
+    // built; spectate.js loads it and passes it in as `options.network`, which
+    // is why those agents work in the browser at all.
+    // SPECS[0] is what the page opens on, so it has to be an agent whose weight
+    // file is actually in the repository. `bigx-s7.bin` is 87 MB and gitignored
+    // (see bot/README.md), so the entries that use it only work once it has been
+    // trained locally -- they are listed anyway, because they are the strongest
+    // agents and this is where you would want to watch them.
+    //
+    // Depth 2 comes before depth 3 within each network because building a replay
+    // is synchronous: ~1000 moves at 3 ms is a blink, the same game at depth 3
+    // is the better part of a minute of frozen page.
     const SPECS = [
-        { spec: 'linear:preset=v4', label: 'linear v4  (best)' },
+        { spec: 'fx:weights=bot/weights/big-td.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/big-td.bin', label: 'expectimax depth 2  (9315)' },
+        { spec: 'fx:weights=bot/weights/big-td.bin,depth=2,cap=4,rootk=3', weights: 'bot/weights/big-td.bin', label: 'expectimax depth 2, cheap  (8746)' },
+        { spec: 'td:weights=bot/weights/big-td.bin', weights: 'bot/weights/big-td.bin', label: 'big net, greedy, no search  (7799)' },
+        { spec: 'fx:weights=bot/weights/bigx-s7.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/bigx-s7.bin', label: 'expectimax depth 2, best net  (10116, needs bigx-s7.bin)' },
+        { spec: 'fx:weights=bot/weights/bigx-s7.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6', weights: 'bot/weights/bigx-s7.bin', label: 'expectimax depth 3, best net  (10526, needs bigx-s7.bin, slow)' },
+        { spec: 'blend:preset=h1,weights=bot/weights/tdsym3.bin,beta=1', weights: 'bot/weights/tdsym3.bin', label: 'blend h1 + net  (6450)' },
+        { spec: 'td:weights=bot/weights/tdsym3.bin', weights: 'bot/weights/tdsym3.bin', label: 'base net, greedy  (5902)' },
+        { spec: 'linear:preset=h1', label: 'linear h1  (5351, fitted to humans)' },
+        { spec: 'linear:preset=v4', label: 'linear v4  (5160)' },
         { spec: 'linear:preset=v3', label: 'linear v3  (4265)' },
         { spec: 'linear:preset=v2', label: 'linear v2  (3759)' },
         { spec: 'linear:preset=v1', label: 'linear v1  (2619)' },
@@ -109,7 +141,26 @@
     // then let explicit feature=value options override individual weights.
     const BEST_PRESET = 'v4';
 
+    // Weight vectors produced by fit.js are 45 numbers long, which makes for an
+    // unreadable spec string (and an unreadable benchmark table). `json=PATH`
+    // loads one from disk instead, so a fitted agent is still addressable by a
+    // short spec: linear:json=bot/weights/fit8000.json
+    const jsonCache = {};
+    function loadWeightsFile(file) {
+        if (jsonCache[file]) return jsonCache[file];
+        if (typeof require !== 'function') throw new Error('linear:json= needs Node');
+        const fs = require('fs'), path = require('path');
+        const full = path.isAbsolute(file) ? file : path.join(__dirname, '..', file);
+        jsonCache[file] = JSON.parse(fs.readFileSync(full, 'utf8'));
+        return jsonCache[file];
+    }
+
     function weightsFromOptions(options) {
+        if (options.json) {
+            const weights = Object.assign({}, loadWeightsFile(options.json));
+            for (const key of Ev.FEATURES) if (key in options) weights[key] = options[key];
+            return weights;
+        }
         const explicit = Ev.FEATURES.some(f => f in options);
         // With no preset and no explicit weights, use the strongest preset --
         // a bare `linear` should be the best agent, not an arbitrary default.
@@ -278,21 +329,24 @@
     // Picks the move maximizing (points scored now) + V(resulting afterstate),
     // where V is the network trained by bot/train.js. Evaluation is 36 table
     // lookups per candidate move, so this is no slower than the linear agent.
+    // Weight files carry their own architecture (tuple set, symmetry, stages),
+    // so a spec only has to name the file. `sym=` is still accepted, because the
+    // original headerless files predate the header and cannot say.
     const netCache = {};
-    function loadNetwork(file) {
-        if (netCache[file]) return netCache[file];
+    function loadNetwork(file, override) {
+        const key = file + '|' + JSON.stringify(override || null);
+        if (netCache[key]) return netCache[key];
         if (typeof require !== 'function') throw new Error('td agent needs Node (or a preloaded network)');
-        const fs = require('fs'), path = require('path');
+        const path = require('path');
         const full = path.isAbsolute(file) ? file : path.join(__dirname, '..', file);
-        const buf = fs.readFileSync(full);
-        netCache[file] = new NTuple.Network(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
-        return netCache[file];
+        netCache[key] = NTuple.load(full, override);
+        return netCache[key];
     }
 
     register('td', function (options) {
         const rng = makeRng(options.seed != null ? options.seed : 1);
-        const net = options.network || loadNetwork(options.weights || 'bot/weights/td1.bin');
-        net.sym = !!options.sym;
+        const override = 'sym' in options ? { sym: !!options.sym } : null;
+        const net = options.network || loadNetwork(options.weights || 'bot/weights/td1.bin', override);
         return {
             name: 'td',
             scoreMoves(game) {
@@ -318,7 +372,8 @@
     // term (which is in points) against the linear term (arbitrary units).
     register('blend', function (options) {
         const rng = makeRng(options.seed != null ? options.seed : 1);
-        const net = options.network || loadNetwork(options.weights || 'bot/weights/td1.bin');
+        const net = options.network || loadNetwork(options.weights || 'bot/weights/td1.bin',
+            'sym' in options ? { sym: !!options.sym } : null);
         const beta = options.beta != null ? options.beta : 1;
         const evaluate = linearEvaluator(weightsFromOptions(options));
         const agent = greedy('blend', (next, move, game) =>
@@ -389,6 +444,239 @@
                 let best = scored[0];
                 for (const s of scored) if (s.value > best.value) best = s;
                 return best.move;
+            }
+        };
+    });
+
+    // ---- expectimax over the value network ---------------------------------
+    // The `search` agent above searches the LINEAR evaluation with a fixed,
+    // pessimistic refill, which is why it never paid: it optimises a line that
+    // the real tile generator will not produce. This one is the proper thing.
+    //
+    //   max node   a position with a full board -- pick the best legal move
+    //   chance node an afterstate (holes where the chain collapsed) -- average
+    //               over the tiles that could drop into those holes
+    //
+    // The network is trained on afterstates, so a leaf is exactly one
+    // `net.value(cells)` and depth 1 reduces to the plain `td` agent.
+    //
+    // Refill order: apply() compacts every column downwards and then tops it up
+    // from the generator, columns left to right, bottom to top within a column.
+    // After a FILL_NONE preview the holes are exactly the zeros, and scanning
+    // them in index order (i ascending, then j ascending) visits them in the
+    // same order the generator would fill them -- so assigning a tile vector to
+    // that scan reproduces a genuine successor state.
+    function chanceOutcomes(cells, maxGen, cap, rng) {
+        const holes = [];
+        for (let k = 0; k < 25; k++) if (cells[k] === 0) holes.push(k);
+        const h = holes.length;
+        if (h === 0) return { holes, combos: [[]], weight: 1 };
+        const total = Math.pow(maxGen, h);
+        if (total <= cap) {
+            // Full enumeration: every refill is equally likely.
+            const combos = [];
+            for (let n = 0; n < total; n++) {
+                const c = new Uint8Array(h);
+                let x = n;
+                for (let t = 0; t < h; t++) { c[t] = (x % maxGen) + 1; x = (x / maxGen) | 0; }
+                combos.push(c);
+            }
+            return { holes, combos, weight: 1 / total };
+        }
+        // Too wide to enumerate: sample it. Unbiased, and the variance only has
+        // to be small enough to order the root moves.
+        const combos = [];
+        for (let n = 0; n < cap; n++) {
+            const c = new Uint8Array(h);
+            for (let t = 0; t < h; t++) c[t] = ((rng() * maxGen) | 0) + 1;
+            combos.push(c);
+        }
+        return { holes, combos, weight: 1 / cap };
+    }
+
+    register('ex', function (options) {
+        const rng = makeRng(options.seed != null ? options.seed : 1);
+        const net = options.network || loadNetwork(options.weights || 'bot/weights/tdsym3.bin',
+            'sym' in options ? { sym: !!options.sym } : null);
+        const depth = options.depth || 2;
+        const cap = options.cap || 16;          // chance branches per node
+        // Only the top `cands` moves (by the depth-1 value) are searched deeper;
+        // the rest keep their depth-1 score. 0 = search everything.
+        const cands = options.cands || 0;
+        const beta = options.beta != null ? options.beta : 0;
+        const evaluate = beta ? linearEvaluator(weightsFromOptions(options)) : null;
+
+        // Value of a full-board position, looking `d` max-levels ahead.
+        function maxValue(game, d) {
+            const moves = game.legalMoves();
+            if (!moves.length) return 0;                 // dead: no more score
+            let best = -Infinity;
+            for (const m of moves) {
+                const after = game.preview(m[0], m[1], FILL_NONE);
+                const r = after.score - game.score;
+                let v = r + net.value(after.cells);
+                if (beta) v += evaluate(after, m, game) / beta;
+                if (d > 1) v = r + chanceValue(after, d);
+                if (v > best) best = v;
+            }
+            return best;
+        }
+
+        // Expected value of an afterstate whose holes have not been filled yet.
+        function chanceValue(after, d) {
+            const { holes, combos, weight } = chanceOutcomes(after.cells, after.maxGen, cap, rng);
+            let sum = 0;
+            for (const c of combos) {
+                const g = after.clone(FILL_NONE);
+                for (let t = 0; t < holes.length; t++) g.cells[holes[t]] = c[t];
+                sum += maxValue(g, d - 1);
+            }
+            return sum * weight;
+        }
+
+        return {
+            name: 'ex',
+            scoreMoves(game) {
+                const moves = game.legalMoves();
+                const shallow = moves.map(move => {
+                    const after = game.preview(move[0], move[1], FILL_NONE);
+                    const r = after.score - game.score;
+                    let value = r + net.value(after.cells);
+                    if (beta) value += evaluate(after, move, game) / beta;
+                    return { move, after, r, value };
+                });
+                if (depth <= 1) return shallow;
+                let searched = shallow;
+                if (cands && shallow.length > cands) {
+                    searched = shallow.slice().sort((p, q) => q.value - p.value).slice(0, cands);
+                }
+                for (const s of searched) s.value = s.r + chanceValue(s.after, depth);
+                return shallow;
+            },
+            chooseMove(game) {
+                const scored = this.scoreMoves(game);
+                if (!scored.length) return null;
+                let best = -Infinity;
+                for (const s of scored) if (s.value > best) best = s.value;
+                const tied = scored.filter(s => s.value === best);
+                return tied[Math.floor(rng() * tied.length)].move;
+            }
+        };
+    });
+
+    // Expectimax over the value network, on the fast board representation in
+    // search.js. `depth` counts max-levels: 1 is plain greedy `td`, 2 averages
+    // over the tiles that drop in and then looks one move further.
+    //
+    //   cap      chance branches at the first chance node (full enumeration
+    //            when maxGen^holes fits, sampling when it does not)
+    //   capDeep  the same at every deeper chance node
+    // `weights=a.bin+b.bin` averages several networks. Nets trained on
+    // different tuple sets make different mistakes, and the search only needs
+    // something with a `value(cells)` method.
+    function loadNetworks(spec, override) {
+        const files = String(spec).split('+');
+        if (files.length === 1) return loadNetwork(files[0], override);
+        const nets = files.map(f => loadNetwork(f, override));
+        const k = 1 / nets.length;
+        return { value(cells) { let s = 0; for (const n of nets) s += n.value(cells); return s * k; } };
+    }
+
+    // ---- the exposed-6 rule ------------------------------------------------
+    // A 6 is permanent and unplayable, so where it sits is a decision the board
+    // has to live with for the rest of the game. STRATEGY.md says to seal them
+    // against walls and other 6s; `sixopen` is the linear agents' version of
+    // that, and the value network is supposed to have learned it.
+    //
+    // As a hard override: if some legal move makes a 6 with at least two of its
+    // four sides against a wall or another 6, then no move may make a 6 with
+    // three or four sides open. Everything else is left to the base agent,
+    // which still picks among what survives.
+    //
+    // Openness is counted on the afterstate, where the cells the chain vacated
+    // are still holes: a hole is going to be refilled with an ordinary tile, so
+    // it counts as open. Only walls and existing 6s block.
+    function openSidesOf(cells, k) {
+        const i = (k / 5) | 0, j = k % 5;
+        let open = 0;
+        if (j < 4 && cells[k + 1] !== 6) open++;
+        if (j > 0 && cells[k - 1] !== 6) open++;
+        if (i > 0 && cells[k - 5] !== 6) open++;
+        if (i < 4 && cells[k + 5] !== 6) open++;
+        return open;
+    }
+
+    // For each scored move, how exposed the 6 it creates would be (null if it
+    // creates no 6). Then drop the exposed ones when a sealed one exists.
+    //
+    // `eps` softens the override: the exposed move survives if the agent rates
+    // it more than `eps` points above the best move that obeys the rule. The
+    // hypothesis the rule encodes is that the network under-values a permanent
+    // liability, which is a claim about the cases where it is nearly
+    // indifferent, not about the cases where it sees a concrete reason.
+    // eps = Infinity is the hard rule.
+    function applySixRule(game, scored, eps) {
+        let bestSealed = 5, anySix = false;
+        const open = new Array(scored.length).fill(null);
+        for (let t = 0; t < scored.length; t++) {
+            const m = scored[t].move;
+            if (game.at(m[0], m[1]) !== 5) continue;
+            const after = game.preview(m[0], m[1], FILL_NONE);
+            open[t] = openSidesOf(after.cells, after.lastCreated);
+            anySix = true;
+            if (open[t] < bestSealed) bestSealed = open[t];
+        }
+        if (!anySix || bestSealed > 2) return scored;
+        const kept = scored.filter((s, t) => open[t] === null || open[t] <= 2);
+        if (!kept.length) return scored;
+        if (eps !== Infinity) {
+            let bestAll = -Infinity, bestKept = -Infinity;
+            for (const s of scored) if (s.value > bestAll) bestAll = s.value;
+            for (const s of kept) if (s.value > bestKept) bestKept = s.value;
+            if (bestAll - bestKept > eps) return scored;
+        }
+        return kept;
+    }
+
+    register('fx', function (options) {
+        const rng = makeRng(options.seed != null ? options.seed : 1);
+        const net = options.network || loadNetworks(options.weights || 'bot/weights/tdsym3.bin',
+            'sym' in options ? { sym: !!options.sym } : null);
+        // Softmax move selection. Only useful when the metric is the best of
+        // many games rather than the average of them: it costs mean score and
+        // buys spread, and the best of 100 tries cares about spread.
+        const temp = options.temp || 0;
+        const sixRule = !!options.sixrule || options.sixeps != null;
+        const sixEps = options.sixeps != null ? options.sixeps : Infinity;
+        const searcher = Search.makeSearcher(net, {
+            depth: options.depth || 2,
+            cap: options.cap,
+            capDeep: options.capDeep,
+            topk: options.topk,
+            rootk: options.rootk,
+            risk: options.risk,
+            rng
+        });
+        return {
+            name: 'fx',
+            scoreMoves(game) { return searcher.scoreMoves(game); },
+            chooseMove(game) {
+                let scored = searcher.scoreMoves(game);
+                if (!scored.length) return null;
+                if (sixRule) scored = applySixRule(game, scored, sixEps);
+                let best = -Infinity;
+                for (const s of scored) if (s.value > best) best = s.value;
+                if (temp > 0) {
+                    // Softmax relative to the best move, so the scale of the
+                    // values does not matter -- only the gaps do.
+                    let total = 0;
+                    const wts = scored.map(s => { const w = Math.exp((s.value - best) / temp); total += w; return w; });
+                    let r = rng() * total;
+                    for (let t = 0; t < scored.length; t++) { r -= wts[t]; if (r <= 0) return scored[t].move; }
+                    return scored[scored.length - 1].move;
+                }
+                const tied = scored.filter(s => s.value === best);
+                return tied[Math.floor(rng() * tied.length)].move;
             }
         };
     });
