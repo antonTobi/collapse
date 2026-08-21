@@ -13,6 +13,7 @@ Headless implementation of the game plus a place to develop and benchmark agents
 | `search.js` | Expectimax over the value network: max nodes on full boards, chance nodes over the tiles that drop into the holes. |
 | `grow.js` | Copy a trained network into a bigger architecture (more tuples, more stage banks) without changing what it computes. |
 | `starts.js` | Sample positions from search play, for training episodes to start from. |
+| `reduce.js` | Drop the mirror-duplicated half of a network's tuples. Same function, 40% fewer table reads. |
 | `tuples.html` | Every tuple shape the network reads, drawn on a board. Open it directly; it reads `ntuple.js`, so it cannot go stale. |
 | `probe.js` | Play one position out many times per candidate move, to settle an argument about a single move. |
 | `tune.js` | Weight tuning by playing games: 1-D sweeps, coordinate ascent, random-direction climbing. |
@@ -225,6 +226,16 @@ file was trained:
 * `--five` on `grow.js` — a second, independent banking dimension: how many
   separate groups of 5s are on the board, capped at 2+. It multiplies the bank
   count by three.
+
+Every set `X` has a mirror-reduced twin `Xr` with half the tuples and the same
+expressive power — see LEADERBOARD.md. Train `Xr` from zeros, or convert a
+trained `X` with `bot/reduce.js`. The fastest path from the current network:
+
+```bash
+node bot/reduce.js --in bot/weights/bigx-s7.bin  --out bot/weights/bigxr-s7.bin
+node bot/grow.js   --in bot/weights/bigxr-s7.bin --out bot/weights/domsr-s7.bin --set domsr
+node bot/ptrain.js --jobs 10 --resume bot/weights/domsr-s7.bin --episodes 3000000
+```
 
 ```bash
 node bot/ptrain.js --jobs 10 --set big --sym --episodes 2000000 --out bot/weights/mine.bin

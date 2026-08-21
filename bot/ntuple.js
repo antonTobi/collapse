@@ -100,8 +100,50 @@
         // `big` with the cross shapes appended. The appended tuples come last,
         // so a `big` network's weights are exactly this one's leading prefix
         // and can be copied straight in -- see bot/grow.js.
-        bigx: () => SETS.big().concat(crosses())                                 // 95 tuples, 3 259 476 w
+        bigx: () => SETS.big().concat(crosses()),                                // 95 tuples, 3 259 476 w
+
+        // Three cuts of `bigx`, for the question "does a tuple that is a strict
+        // subset of another tuple earn its place". A 4-run sits inside a 5-run,
+        // a 2x2 sits inside a 2x3, a corner L sits inside a 2x2 -- so in pure
+        // representational terms the smaller one adds nothing the larger cannot
+        // express. What it adds is *coarseness*: its table is 7x smaller, so
+        // every entry is visited 7x more often and generalises over the cell it
+        // does not look at. Which effect wins is an empirical question about
+        // how much data there is, not an argument.
+        bigx5: () => squares().concat(runs(4), runs(5), crosses()),              // 71 tuples,   435 953 w
+        lean: () => squares().concat(runs(5), crosses()),                        // 51 tuples,   387 933 w
+        coarse: () => squares().concat(runs(4), crosses()),                      // 61 tuples,   267 883 w
+        // Every adjacent pair. The coarsest feature there is: 49 entries, so
+        // each is visited constantly and generalises over everything else on
+        // the board. Every domino already sits inside a 2x2 or a run, so it
+        // adds no representational power at all -- only speed of learning.
+        doms: () => squares().concat(runs(4), runs(5), blocks(2, 3), blocks(3, 2), crosses(), runs(2))
     };
+
+    // With `sym` on, the mirror of a tuple is another tuple in these sets, and
+    // the two get identical updates -- so half the tables are duplicates and
+    // half the reads are wasted. Keeping one of each mirror pair computes the
+    // same function with 40% fewer reads. bot/reduce.js converts a trained
+    // network; training a reduced set from zeros needs no conversion at all.
+    function mirrorReduce(tuples) {
+        const mirror = t => t.map(mirrorCell);
+        const setKey = a => a.slice().sort((x, y) => x - y).join(',');
+        const index = new Map();
+        tuples.forEach((t, i) => index.set(setKey(t), i));
+        const out = [], taken = new Set();
+        tuples.forEach((t, i) => {
+            if (taken.has(i)) return;
+            taken.add(i);
+            const partner = index.get(setKey(mirror(t)));
+            if (partner !== undefined) taken.add(partner);
+            out.push(t);
+        });
+        return out;
+    }
+    for (const name of Object.keys(SETS)) {
+        const build = SETS[name];
+        SETS[name + 'r'] = () => mirrorReduce(build());
+    }
 
     const mirrorCell = k => (W - 1 - ((k / H) | 0)) * H + (k % H);
 

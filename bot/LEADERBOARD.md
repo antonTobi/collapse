@@ -326,6 +326,86 @@ episodes the 7-bank network is still a 3-bank network stored seven times. That i
 not an argument against the split — it is what "recently grown" looks like — but
 it does mean the memory is currently mostly redundancy.
 
+## Redundant tuples are not redundant
+
+A 4-run sits inside a 5-run, a 2x2 inside a 2x3, a corner L inside a 2x2. In
+representational terms the smaller one adds nothing: anything it can express,
+the larger table can express too. So the obvious cleanup is to delete it.
+
+The obvious cleanup is wrong, for a reason worth keeping. A 4-cell table has
+2401 entries against a 5-cell table's 16 807, so every entry is visited seven
+times as often and generalises over the cell it does not look at. The small
+tuple is not redundant information, it is the same information at a coarser
+resolution, learned seven times faster. Which effect wins is a question about
+how much data there is.
+
+Five tuple sets, all trained from zeros on identical seeds, 150 000 episodes,
+alpha 0.1 -> 0.03, lambda 0.5 -> 0, benchmarked greedy over 300 games:
+
+| set | tuples | weights | reads/eval | mean | vs `bigx` | ms/move |
+| --- | -----: | ------: | ---------: | ---: | --------: | ------: |
+| **`doms`** = `bigx` + all 40 dominoes | 135 | 3.26 M | 1046 | **6426** | **+984 +- 73** | 0.083 |
+| `bigx` | 95 | 3.26 M | 886 | 5442 | — | 0.071 |
+| `coarse` = squares + 4-runs + crosses | 61 | 268 k | 498 | 5147 | -295 +- 78 | 0.043 |
+| `lean` = squares + 5-runs + crosses | 51 | 388 k | 438 | 4961 | -481 +- 82 | 0.041 |
+| `bigx5` = `bigx` without the 2x3 blocks | 71 | 436 k | 598 | 4904 | -537 +- 81 | 0.050 |
+
+Three things fall out of that table.
+
+**Deleting the contained tuples costs score.** `lean` keeps the 5-runs and drops
+the 4-runs that sit inside them, and loses 481.
+
+**When forced to choose, keep the smaller one.** `coarse` and `lean` differ only
+in which run length they keep, and the one that keeps the *coarse* 4-runs beats
+the one that keeps the *fine* 5-runs by about 190, while also being cheaper. The
+subset-removal instinct points exactly the wrong way.
+
+**Adding tuples coarser than anything already there is worth a lot.** Every
+domino already sits inside a 2x2 or a run, so the 40 of them add no
+representational power whatsoever -- 1960 weights, 0.06% of the table, 18% more
+reads. They are worth **+984**, by far the largest single architecture result
+here. At 49 entries each they are effectively fully trained after a few thousand
+episodes, and they carry the model while the six-cell tables are still empty.
+
+The caveat is that this is measured at 150 000 episodes, where a 3M-weight table
+is very far from filled. The advantage should shrink as the fine tuples catch
+up -- but every network in this file has been episode-limited, so the regime the
+measurement is taken in is the regime that matters. `bigx` is a prefix of
+`doms`, so `grow.js` transplants a trained network into it for free.
+
+## Half the tuples are mirror duplicates
+
+With `sym` on, each tuple is read twice -- once on the board, once on the mirror
+-- both into the same table. But these tuple sets are *closed under mirroring*:
+for all but the 17 self-mirrored shapes, the mirror of tuple k is another tuple
+already in the list. Tuple k's mirror-read is exactly its partner's board-read,
+so the two receive identical updates at identical indices, converge to the same
+table, and the sum counts every distinct contribution twice.
+
+Measured on the trained 95-tuple network, the two tables of a mirror pair differ
+by an RMS of **0.10** against an RMS magnitude of **32** -- 0.3%, and that
+residual is Hogwild write races, not anything learned.
+
+Folding each pair into one representative is exact rather than approximate:
+
+```
+pair = w_k[a] + w_k[m] + w_p[a_p] + w_p[m_p]
+     = w_k[a] + w_k[m] + w_p[s(m)] + w_p[s(a)]
+     = W[a] + W[m]                    with  W[x] = w_k[x] + w_p[s(x)]
+```
+
+where `s` permutes the digits of an index, because the two tuples list the same
+cells in a different order. `bot/reduce.js` does it and checks the result:
+
+| | tuples | reads/eval | weights | greedy ms/move | depth-2 ms/move |
+| --- | -----: | ---------: | ------: | -------------: | --------------: |
+| `bigx-s7` | 95 | 886 | 22.8 M | 0.223 | 3.00 |
+| `bigxr-s7` | 56 | 528 | 13.6 M | **0.091** | **1.80** |
+
+**Identical play: 0W 100D 0L at depth 2, mean difference +0 +- 0**, and the two
+networks agree to 1.5e-4 on 50 045 real afterstates (float32 rounding). 40% of
+the reads and 40% of the memory were doing nothing at all.
+
 ## Choosing what to bank on
 
 Two candidate replacements for the 6-count, measured over 13 844 real positions.

@@ -23,7 +23,15 @@ Thumbs.db
 # `grow.js` regenerate them, and the big ones are tens of megabytes each.
 # bot/weights/big-td.bin (12 MB) is committed so the spectator and the
 # reproduction commands in bot/README.md work from a fresh clone.
-bot/weights/big-s3-final.bin
-bot/weights/bigx-*.bin
-bot/weights/*snap*.bin
-bot/weights/frozen*.bin
+# Allow-list rather than deny-list: every new training run produces another
+# large .bin, and listing them one by one gets one of them wrong eventually.
+bot/weights/*.bin
+!bot/weights/big-td.bin
+!bot/weights/c_base.bin
+!bot/weights/td1.bin
+!bot/weights/td1_ckpt.bin
+!bot/weights/td_probe.bin
+!bot/weights/tdsym.bin
+!bot/weights/tdsym2.bin
+!bot/weights/tdsym3.bin
+bot/data/starts*.bin
