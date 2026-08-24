@@ -28,6 +28,7 @@ Thumbs.db
 bot/weights/*.bin
 bot/weights/*.bins
 !bot/weights/big-td.bin
+!bot/weights/dom39h.bins
 !bot/weights/c_base.bin
 !bot/weights/td1.bin
 !bot/weights/td1_ckpt.bin

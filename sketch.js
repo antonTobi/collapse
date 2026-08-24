@@ -34,7 +34,6 @@ let settings = {
 // Game over popup state
 let gameOverPopupPending = false;
 let gameOverSettledTime = null;
-let gameOverReviewButton = null;
 
 // Discord link bounds for click detection
 let discordLinkBounds = null;
@@ -76,9 +75,22 @@ let statistics = {
 // Game History
 let gameHistory = []; // Array to store last 7 scores
 
+// Reflect the game-over state on the HTML review button (its space is reserved).
+function updateReviewButton(over) {
+    const btn = document.getElementById('reviewButton');
+    if (btn) btn.classList.toggle('on', over);
+}
+
 function setup() {
     canvas = createCanvas(w * S, h * S + S);
+    canvas.parent('board');
     canvas.mousePressed(onClick);
+
+    // HTML review button beneath the board, shown once the game is over.
+    const reviewButton = document.getElementById('reviewButton');
+    if (reviewButton) reviewButton.addEventListener('click', () => {
+        openReview(currentUserDisplayName || "You", grid.seed, grid.moves.join(""));
+    });
 
     // Add touch event listeners for mobile support
     canvas.elt.addEventListener('touchstart', handleTouchStart, { passive: false });
@@ -126,6 +138,13 @@ function setup() {
         showMenu = savedShowMenu;
     }
 
+    // Show cached leaderboard records right away and refresh them in the
+    // background (e.g. when returning from the review page).
+    loadCachedLeaderboardData();
+    if (showMenu && currentMenuTab === "leaderboards") {
+        fetchLeaderboardData(currentSubTab.leaderboards);
+    }
+
     // Restore saved game or start new game
     let autoSaveSeed = getItem("autoSaveSeed");
     if (autoSaveSeed !== null) {
@@ -165,6 +184,7 @@ function draw() {
     grid.draw();
 
     let over = grid.gameOver && grid.settled;
+    updateReviewButton(over);
 
     // Draw score bar background
     noStroke();
@@ -186,19 +206,7 @@ function draw() {
     text(grid.displayScore, width / 2, 38);
 
     textSize(15);
-    if (over) {
-        // A finished game keeps its board on screen with a single button to
-        // review it; the leaderboard opens on its own once the score is in.
-        noStroke();
-        const buttonY = 52, buttonH = 23, buttonW = 104;
-        const reviewX = width / 2 - buttonW / 2;
-        gameOverReviewButton = { x: reviewX, y: buttonY, w: buttonW, h: buttonH };
-        fill(255);
-        rect(reviewX, buttonY, buttonW, buttonH, 3);
-        fill(0);
-        textSize(12);
-        text("Review game", reviewX + buttonW / 2, buttonY + buttonH / 2);
-    } else {
+    if (!over) {
         // Check if split diff should be displayed (takes priority over extra stat)
         let showingSplitDiff = false;
         let splitDiffAlpha = 255;
@@ -902,6 +910,12 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
     textSize(16);
     textAlign(RIGHT, CENTER);
     text("✏️ Edit name", width - 35, contentStartY + contentHeight - 20);
+
+    // Hint that a leaderboard record opens its review
+    fill(150);
+    textSize(13);
+    textAlign(LEFT, CENTER);
+    text("Click a record to review!", panelX + 20, contentStartY + contentHeight - 20);
 
     textAlign(CENTER, CENTER);
 }
@@ -1728,12 +1742,6 @@ function handleDocumentClick(event) {
 }
 
 function onClick() {
-    if (grid.gameOver && grid.settled && gameOverReviewButton &&
-        mouseX >= gameOverReviewButton.x && mouseX <= gameOverReviewButton.x + gameOverReviewButton.w &&
-        mouseY >= gameOverReviewButton.y && mouseY <= gameOverReviewButton.y + gameOverReviewButton.h) {
-        openReview(currentUserDisplayName || "You", grid.seed, grid.moves.join(""));
-        return;
-    }
     if (mouseY < 80) {
         // Header area - always accessible
         if (mouseX > width - 80) {
@@ -2145,8 +2153,8 @@ function handleTouchStart(event) {
 
         let touch = event.touches[0];
         let rect = canvas.elt.getBoundingClientRect();
-        let touchX = touch.clientX - rect.left;
-        let touchY = touch.clientY - rect.top;
+        let touchX = (touch.clientX - rect.left) * (width / rect.width);
+        let touchY = (touch.clientY - rect.top) * (height / rect.height);
 
         // Temporarily override p5 mouse coords so onClick() works correctly
         let savedMouseX = mouseX;
@@ -2161,7 +2169,7 @@ function handleTouchStart(event) {
 
     let touch = event.touches[0];
     let rect = canvas.elt.getBoundingClientRect();
-    let touchY = touch.clientY - rect.top;
+    let touchY = (touch.clientY - rect.top) * (height / rect.height);
 
     // Only handle scrolling for scrollable tabs in the scrollable area
     if (isScrollableTab() && touchY >= 95 && touchY <= height - 15) {
@@ -2178,7 +2186,7 @@ function handleTouchMove(event) {
 
     let touch = event.touches[0];
     let rect = canvas.elt.getBoundingClientRect();
-    let touchY = touch.clientY - rect.top;
+    let touchY = (touch.clientY - rect.top) * (height / rect.height);
 
     let deltaY = menuDragStartY - touchY;
 
@@ -2198,7 +2206,7 @@ function handleTouchEnd(event) {
         if (event.changedTouches.length > 0) {
             let touch = event.changedTouches[0];
             let rect = canvas.elt.getBoundingClientRect();
-            let touchY = touch.clientY - rect.top;
+            let touchY = (touch.clientY - rect.top) * (height / rect.height);
             let dragDistance = Math.abs(touchY - menuDragStartY);
             wasDrag = dragDistance > 5;
 

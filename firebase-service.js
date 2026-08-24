@@ -529,6 +529,59 @@ async function saveHighScore(score, seed, moves) {
     }
 }
 
+// ============================================================================
+// Leaderboard Caching & Daily WR Splits
+// ============================================================================
+
+const LEADERBOARD_CACHE_KEY = "leaderboardCache";
+
+// Persist the in-memory leaderboard so a return to the page shows records
+// immediately (the leaderboard is re-fetched in the background to refresh them).
+function cacheLeaderboardData() {
+    storeItem(LEADERBOARD_CACHE_KEY, {
+        daily: { date: getTodayDateString(), scores: topScoresDaily },
+        yesterday: { date: getYesterdayDateString(), scores: topScoresYesterday },
+        allTime: topScoresAllTime
+    });
+}
+
+// Restore cached leaderboard records (day-stamped, so stale daily data is
+// discarded across a day boundary).
+function loadCachedLeaderboardData() {
+    let cached;
+    try {
+        cached = getItem(LEADERBOARD_CACHE_KEY);
+    } catch (e) {
+        return;
+    }
+    if (!cached) return;
+    const today = getTodayDateString();
+    const yesterday = getYesterdayDateString();
+    if (cached.daily && cached.daily.date === today && Array.isArray(cached.daily.scores)) {
+        topScoresDaily = cached.daily.scores;
+    }
+    if (cached.yesterday && cached.yesterday.date === yesterday && Array.isArray(cached.yesterday.scores)) {
+        topScoresYesterday = cached.yesterday.scores;
+    }
+    if (Array.isArray(cached.allTime)) {
+        topScoresAllTime = cached.allTime;
+    }
+}
+
+// When today's leaderboard is fetched and a new Daily WR has appeared, keep the
+// Daily WR comparison splits in sync — only while the player is comparing against
+// the Daily WR, so other comparisons are left untouched.
+function refreshDailyWrSplits() {
+    const top = topScoresDaily[0];
+    if (!top || typeof top.score !== 'number') return;
+    if (top.score <= (comparisonScores.dailywr ?? -Infinity)) return;
+    if (typeof settings === 'undefined' || settings.compareSplits !== 'dailywr') return;
+    if (top.seed == null || !top.moves) return;
+    comparisonScores.dailywr = top.score;
+    comparisonSplits = replayGameForSplits(top.seed, top.moves);
+    console.log('Daily WR splits updated (score ' + top.score + ').');
+}
+
 async function fetchTopScores(fetchAllTime = showAllTime) {
     isLoadingScores = true;
     try {
@@ -571,7 +624,9 @@ async function fetchTopScores(fetchAllTime = showAllTime) {
             topScoresAllTime = scores;
         } else {
             topScoresDaily = scores;
+            refreshDailyWrSplits();
         }
+        cacheLeaderboardData();
 
         console.log(`Top scores fetched (${fetchAllTime ? 'all-time' : 'daily'}):`, scores);
         isLoadingScores = false;
@@ -609,6 +664,7 @@ async function fetchYesterdayScores() {
         scores = scores.slice(0, 10);
 
         topScoresYesterday = scores;
+        cacheLeaderboardData();
 
         console.log("Yesterday's scores fetched:", scores);
         isLoadingScores = false;
