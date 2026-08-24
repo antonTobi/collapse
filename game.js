@@ -33,11 +33,8 @@ class Box {
                 text(this.n, x, y + yOffset);
             }
         } else {
-            // Draw shape centered in the tile (only if showShapes setting is enabled)
-            let showShapes = (typeof settings !== 'undefined') ? settings.showShapes : false;
-            if (showShapes) {
-                drawShape(this.shape, x, y, 9, 200);
-            }
+            // Draw shape centered in the tile (shapes are always shown)
+            if (this.shape) drawShape(this.shape, x, y, 9, 200);
         }
     }
 }

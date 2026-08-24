@@ -113,11 +113,40 @@
     function buildFrames(replay) {
         const game = new Game(replay.seed)
         const out = []
+        let shapeAt = new Array(W * H).fill(null)   // per-cell polyomino, null unless a 6-tile
         for (let n = 0; n <= replay.moves.length; n++) {
             const move = n < replay.moves.length ? decodeMove(replay.moves[n]) : null
-            out.push(capture(game, move))
+            const frame = capture(game, move)
+            frame.shapes = shapeAt.slice()
+            out.push(frame)
             if (!move) break
-            if (!game.apply(move[0], move[1])) throw new Error('The recorded replay contains an illegal move.')
+
+            // Track the polyomino each 6-tile was collapsed from, in game.js's
+            // coordinate convention ([col, -row]), so the review can redraw it.
+            const [mi, mj] = canonicalMove(game.cells, move)
+            const chain = game.getChain(mi, mj)
+            const clicked = mi * H + mj
+            const makesSix = game.at(mi, mj) === 5
+            const newShape = makesSix ? chain.map(([ci, cj]) => [ci, -cj]) : null
+            const removed = new Set(chain.map(([ci, cj]) => ci * H + cj))
+            removed.delete(clicked)      // the clicked cell survives, upgraded
+
+            if (!game.apply(mi, mj)) throw new Error('The recorded replay contains an illegal move.')
+
+            // Reconcile shapeAt with the compacted board: survivors keep their
+            // shape (they only fall), the upgraded tile gains the new shape, and
+            // the refilled cells at the top have none.
+            const nextShapeAt = new Array(W * H).fill(null)
+            for (let i = 0; i < W; i++) {
+                const base = i * H
+                let write = base
+                for (let j = 0; j < H; j++) {
+                    const k = base + j
+                    if (removed.has(k)) continue
+                    nextShapeAt[write++] = (k === clicked && makesSix) ? newShape : shapeAt[k]
+                }
+            }
+            shapeAt = nextShapeAt
         }
         return out
     }
@@ -341,11 +370,11 @@
 
     function targetY(row) { return (H - 1 - row) * CELL }
 
-    function buildBoard(cells) {
+    function buildBoard(cells, shapes) {
         const cols = []
         for (let i = 0; i < W; i++) {
             cols[i] = []
-            for (let j = 0; j < H; j++) cols[i].push({ n: cells[i * H + j], y: targetY(j), vy: 0 })
+            for (let j = 0; j < H; j++) cols[i].push({ n: cells[i * H + j], y: targetY(j), vy: 0, shape: shapes ? shapes[i * H + j] : null })
         }
         return cols
     }
@@ -353,7 +382,7 @@
     // Set up the falling animation for playing `move` on `prevCells`, landing on
     // `nextCells`. Mirrors game.js's do()/refill() with the incoming values read
     // off nextCells rather than drawn from the RNG.
-    function setupCollapse(prevCells, move, nextCells) {
+    function setupCollapse(prevCells, move, nextCells, nextShapes) {
         const [mi, mj] = canonicalMove(prevCells, move)
         const clicked = mi * H + mj
         const n = prevCells[clicked]
@@ -375,14 +404,17 @@
             // before the loop because pushing grows survivors.length underfoot.
             const kept = survivors.length
             for (let t = 0; kept + t < H; t++) {
-                survivors.push({ n: nextCells[i * H + kept + t], y: -(t + 1) * CELL, vy: 0 })
+                survivors.push({ n: nextCells[i * H + kept + t], y: -(t + 1) * CELL, vy: 0, shape: null })
             }
             cols[i] = survivors
+            // Every tile takes its destination shape: survivors keep theirs, the
+            // upgraded tile and the incoming tiles match the next frame.
+            if (nextShapes) for (let j = 0; j < H; j++) cols[i][j].shape = nextShapes[i * H + j]
         }
         return cols
     }
 
-    function drawBox(i, y, n) {
+    function drawBox(i, y, n, shape) {
         if (n === 0 || y <= -CELL) return
         const x = i * CELL
         ctx.fillStyle = boxColors[n]
@@ -392,6 +424,31 @@
             const metrics = ctx.measureText(String(n))
             const off = (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2
             ctx.fillText(String(n), x + CELL / 2, y + CELL / 2 + off)
+        } else if (shape && shape.length) {
+            drawTileShape(x, y, shape)
+        }
+    }
+
+    // Draw the polyomino a 6-tile was collapsed from, centred in the tile,
+    // matching the main game's drawShape(shape, cx, cy, 9, 200).
+    function drawTileShape(tileX, tileY, shape) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (const [cx, cy] of shape) {
+            if (cx < minX) minX = cx
+            if (cx > maxX) maxX = cx
+            if (cy < minY) minY = cy
+            if (cy > maxY) maxY = cy
+        }
+        const cellSize = 9
+        const pixelWidth = (maxX - minX + 1) * cellSize
+        const pixelHeight = (maxY - minY + 1) * cellSize
+        const startX = tileX + CELL / 2 - Math.floor(pixelWidth / 2)
+        const startY = tileY + CELL / 2 - Math.floor(pixelHeight / 2)
+        ctx.fillStyle = 'rgb(200,200,200)'
+        for (const [cx, cy] of shape) {
+            const xPos = startX + (cx - minX) * cellSize
+            const yPos = startY + (cy - minY) * cellSize
+            ctx.fillRect(xPos + 1, yPos + 1, cellSize - 2, cellSize - 2)
         }
     }
 
@@ -443,7 +500,7 @@
         ctx.textAlign = 'center'
         ctx.textBaseline = 'alphabetic'
         ctx.font = (0.7 * CELL) + 'px Roboto, sans-serif'
-        for (let i = 0; i < W; i++) for (let j = 0; j < cols[i].length; j++) drawBox(i, cols[i][j].y, cols[i][j].n)
+        for (let i = 0; i < W; i++) for (let j = 0; j < cols[i].length; j++) drawBox(i, cols[i][j].y, cols[i][j].n, cols[i][j].shape)
         if (primary) outlineMarker(cols, primary, false)
         if (secondary) outlineMarker(cols, secondary, true)
     }
@@ -502,7 +559,7 @@
     function renderFrame() {
         const frame = frames[index]
         if (!frame) return
-        animBoard = buildBoard(frame.cells)
+        animBoard = buildBoard(frame.cells, frame.shapes)
         // Show the suggestion on every displayed frame except during the rapid
         // skip-to-end jump, where a per-frame suggestion would be too costly.
         const m = markersFor(frame, !skipping)
@@ -576,7 +633,7 @@
     // bot's dashed suggestion is drawn during the fall (subject to the checkbox)
     // so the highlight appears before the animation ends.
     function animateForward(prev, next) {
-        animBoard = setupCollapse(prev.cells, prev.move, next.cells)
+        animBoard = setupCollapse(prev.cells, prev.move, next.cells, next.shapes)
         const m = markersFor(next, true)
         animPrimary = m.primary
         animSecondary = m.secondary
@@ -615,7 +672,9 @@
     function updatePlayButtons() {
         el('play').innerHTML = icon(playState === 'playing' ? 'pause' : 'play')
         el('play').classList.toggle('active', playState === 'playing')
+        el('ff').innerHTML = icon(playState === 'ff' ? 'pause' : 'fastForward')
         el('ff').classList.toggle('active', playState === 'ff')
+        el('last').innerHTML = icon(skipping ? 'pause' : 'skipForward')
         el('last').classList.toggle('active', skipping)
     }
 
@@ -651,6 +710,7 @@
     // — one move per animation frame, no fall animation. On the recorded line it
     // just jumps to the end. Any control cancels it.
     function skipToEnd() {
+        if (skipping) { stopPlayback(); renderFrame(); return }
         if (mode !== 'variation') { snap(frames.length - 1); return }
         stopPlayback()
         skipping = true
@@ -797,9 +857,8 @@
     // --- wiring -------------------------------------------------------------
 
     function wire() {
-        el('back').innerHTML = icon('arrowLeft') + '<span>Back to game</span>'
+        el('back').textContent = 'Exit review'
         el('backMove').innerHTML = icon('chevronLeft')
-        el('ff').innerHTML = icon('fastForward')
         el('step').innerHTML = icon('chevronRight')
         el('last').innerHTML = icon('skipForward')
 

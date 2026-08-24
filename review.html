@@ -77,7 +77,7 @@
         /* Off the recorded line the board gets an accent frame so it is always
            obvious the game on screen is a branching variation. */
         #app.variation #board {
-            box-shadow: 0 0 0 3px var(--accent);
+            box-shadow: 0 0 0 3px #111;
         }
 
         button {
@@ -131,16 +131,8 @@
             display: block;
         }
 
-        #back svg.icon {
-            width: 18px;
-            height: 18px;
-        }
-
         #back {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 7px;
+            text-align: center;
         }
 
         #controls {
@@ -252,7 +244,7 @@
 
 <body>
     <main id="app" hidden>
-        <button id="back" title="Back to game">Back to game</button>
+        <button id="back" title="Exit review">Exit review</button>
         <header id="topbar">
             <div id="score">0</div>
             <div id="reviewer">Reviewing game</div>
@@ -264,9 +256,9 @@
         <div id="controls">
             <button id="first" title="First (Home)"></button>
             <button id="backMove" title="Step back (←)"></button>
+            <button id="step" title="Step forward (→)"></button>
             <button id="play" title="Play with animation (Space)"></button>
             <button id="ff" title="Fast-forward, no animation (F)"></button>
-            <button id="step" title="Step forward (→)"></button>
             <button id="last" title="Skip to end (End)"></button>
         </div>
         <div id="timeline"><input id="scrub" type="range" min="0" max="0" value="0" aria-label="Review move"></div>

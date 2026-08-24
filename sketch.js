@@ -25,7 +25,6 @@ let debug = false; // Set to true to enable debug features
 // Settings (stored in localStorage)
 let settings = {
     disableAnimation: false,
-    showShapes: false,
     extraStat: "nothing", // "nothing", "moves", "time"
     challengeMode: "none", // "none", "bottomrow", "middlecolumn"
     compareSplits: "nothing" // "nothing", "pb", "dailypb", "wr", "dailywr"
@@ -777,7 +776,7 @@ function drawHowToPlayContent(panelX, contentStartY, panelWidth, contentHeight) 
     let lines = [
         "• Click a group of matching tiles to collapse",
         "  them into a single tile with a higher value.",
-        `• Collapsing a group of 5's creates a ${settings.showShapes ? "shape" : "blank"}`,
+        `• Collapsing a group of 5's creates a shape`,
         "  tile, which cannot be further collapsed.",
         "• The game ends when no more moves are",
         "  possible!",
@@ -1301,10 +1300,9 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
     });
 
     let isShapeTab = (subTab === "shape");
-    let checkboxAreaHeight = isShapeTab ? 75 : 0; // Space for header text and "Show shapes" checkbox
 
     // Calculate total content height
-    let totalHeight = 10 + checkboxAreaHeight;
+    let totalHeight = 10;
     for (let achievement of filteredAchievements) {
         if (isShapeTab && achievement.shapes) {
             // Shapes tab: title + shapes
@@ -1333,39 +1331,6 @@ function drawAchievementContent(panelX, contentStartY, panelWidth, contentHeight
     // Achievement list with scroll offset
     textAlign(LEFT, CENTER);
     let y = contentStartY + 10 - menuScrollY;
-
-    // Draw header and "Show shapes" checkbox at top of shape tab
-    if (isShapeTab) {
-        // Header text
-        // fill(255);
-        // textSize(16);
-        // textAlign(LEFT, CENTER);
-        // text("Collect shapes by collapsing groups of 5's!", panelX + 20, y + 10);
-        
-        // y += 30;
-        
-        let checkboxSize = 24;
-        let checkboxX = panelX + panelWidth - 50;
-        let checkboxY = y + 10;
-        
-        fill(255);
-        textSize(16);
-        textAlign(LEFT, CENTER);
-        text("Show shapes on blank tiles:", panelX + 20, checkboxY);
-        
-        stroke(255);
-        strokeWeight(2);
-        noFill();
-        rect(checkboxX, checkboxY - checkboxSize / 2, checkboxSize, checkboxSize, 4);
-        
-        if (settings.showShapes) {
-            line(checkboxX + 4, checkboxY, checkboxX + 10, checkboxY + 6);
-            line(checkboxX + 10, checkboxY + 6, checkboxX + 20, checkboxY - 6);
-        }
-        noStroke();
-        
-        y += 45;
-    }
 
     if (filteredAchievements.length === 0) {
         fill(150);
@@ -1500,8 +1465,8 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     let checkboxSize = 24;
     
     // Calculate total content height
-    // 2 checkboxes (45 each) + 4 toggle groups (45 + 30 each = 75 each) + padding
-    let totalHeight = 20 + lineHeight * 2 + (lineHeight + 30) * 4 + 20;
+    // 1 checkbox (45) + 4 toggle groups (45 + 30 each = 75 each) + padding
+    let totalHeight = 20 + lineHeight * 1 + (lineHeight + 30) * 4 + 20;
     
     // Clamp scroll position
     let maxScroll = Math.max(0, totalHeight - contentHeight);
@@ -1530,27 +1495,6 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     rect(checkboxX, y - checkboxSize / 2, checkboxSize, checkboxSize, 4);
 
     if (settings.disableAnimation) {
-        // Draw checkmark
-        line(checkboxX + 4, y, checkboxX + 10, y + 6);
-        line(checkboxX + 10, y + 6, checkboxX + 20, y - 6);
-    }
-    noStroke();
-
-    y += lineHeight;
-
-    // Show shapes setting
-    textAlign(LEFT, CENTER);
-    fill(255);
-    textSize(16);
-    text("Show shapes on blank tiles:", panelX + 20, y);
-
-    // Draw checkbox
-    stroke(255);
-    strokeWeight(2);
-    noFill();
-    rect(checkboxX, y - checkboxSize / 2, checkboxSize, checkboxSize, 4);
-
-    if (settings.showShapes) {
         // Draw checkmark
         line(checkboxX + 4, y, checkboxX + 10, y + 6);
         line(checkboxX + 10, y + 6, checkboxX + 20, y - 6);
@@ -1859,25 +1803,6 @@ function onClick() {
                     }
                 }
 
-                // Check if clicking "Show shapes" checkbox on achievements shape tab
-                if (currentMenuTab === "achievements" && currentSubTab.achievements === "shape") {
-                    let contentStartY = 110 + 35 + 28 + 10; // tabY + tabHeight + subTabHeight + padding
-                    // y starts at contentStartY + 10, +10 for checkbox center
-                    let checkboxY = contentStartY + 10 - menuScrollY + 10;
-                    let checkboxX = panelX + panelWidth - 50;
-                    let checkboxSize = 24;
-                    let clickPadding = 15;
-                    
-                    if (mouseY >= checkboxY - checkboxSize / 2 - clickPadding && mouseY <= checkboxY + checkboxSize / 2 + clickPadding &&
-                        mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding &&
-                        mouseY >= contentStartY) {
-                        settings.showShapes = !settings.showShapes;
-                        saveSettings();
-                        redraw();
-                        return;
-                    }
-                }
-
                 // Check if clicking a leaderboard record -> open its review
                 if (currentMenuTab === "leaderboards") {
                     for (let rb of leaderboardRowBounds) {
@@ -1917,17 +1842,6 @@ function onClick() {
                         if (mouseY >= y - checkboxSize / 2 - clickPadding && mouseY <= y + checkboxSize / 2 + clickPadding &&
                             mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding) {
                             settings.disableAnimation = !settings.disableAnimation;
-                            saveSettings();
-                            redraw();
-                            return;
-                        }
-
-                        y += lineHeight;
-
-                        // Show shapes checkbox
-                        if (mouseY >= y - checkboxSize / 2 - clickPadding && mouseY <= y + checkboxSize / 2 + clickPadding &&
-                            mouseX >= checkboxX - clickPadding && mouseX <= checkboxX + checkboxSize + clickPadding) {
-                            settings.showShapes = !settings.showShapes;
                             saveSettings();
                             redraw();
                             return;
