@@ -34,10 +34,14 @@ let settings = {
 // Game over popup state
 let gameOverPopupPending = false;
 let gameOverSettledTime = null;
+let gameOverReviewButton = null;
 
 // Discord link bounds for click detection
 let discordLinkBounds = null;
 const DISCORD_URL = "https://discord.gg/4EgJ8rjVag";
+
+// Per-row click bounds for the leaderboard, so a record opens that game's review
+let leaderboardRowBounds = [];
 
 // Achievement notification
 let achievementNotification = null; // Text to display
@@ -183,10 +187,17 @@ function draw() {
 
     textSize(15);
     if (over) {
-        // Game over state - show "Game Over" text
-        fill(255);
+        // A finished game keeps its board on screen with a single button to
+        // review it; the leaderboard opens on its own once the score is in.
         noStroke();
-        text("Game Over", width / 2, 66);
+        const buttonY = 52, buttonH = 23, buttonW = 104;
+        const reviewX = width / 2 - buttonW / 2;
+        gameOverReviewButton = { x: reviewX, y: buttonY, w: buttonW, h: buttonH };
+        fill(255);
+        rect(reviewX, buttonY, buttonW, buttonH, 3);
+        fill(0);
+        textSize(12);
+        text("Review game", reviewX + buttonW / 2, buttonY + buttonH / 2);
     } else {
         // Check if split diff should be displayed (takes priority over extra stat)
         let showingSplitDiff = false;
@@ -383,27 +394,6 @@ function draw() {
         needsContinuousLoop = true;
     }
 
-    // Handle delayed game over popup
-    // Handle game over leaderboard display
-    if (gameOverPopupPending) {
-        // Wait for animation to settle
-        if (grid.settled && gameOverSettledTime === null) {
-            gameOverSettledTime = Date.now();
-        }
-        // Show leaderboard when both settled AND leaderboard data is ready
-        if (gameOverSettledTime !== null && gameOverLeaderboardReady) {
-            gameOverPopupPending = false;
-            gameOverSettledTime = null;
-            gameOverLeaderboardReady = false;
-            showMenu = true;
-            currentMenuTab = "leaderboards";
-            currentSubTab.leaderboards = "today";
-            storeItem("currentSubTab", currentSubTab);
-            menuScrollY = 0;
-        }
-        needsContinuousLoop = true;
-    }
-
     if (!needsContinuousLoop) {
         noLoop();
     }
@@ -414,6 +404,39 @@ function draw() {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+// Open the review page for a game, passing it entirely through the URL
+// (display name, seed and move list as separate parameters) rather than
+// stashing it in storage, so any game — yours or a leaderboard record — can be
+// linked to directly.
+function openReview(displayName, seed, moves) {
+    const params = new URLSearchParams({
+        displayName: displayName || "You",
+        seed: String(seed),
+        moves: moves || ""
+    });
+    window.location.href = "review.html?" + params.toString();
+}
+
+// On game over: submit the score, wait for the leaderboard to reflect it, then
+// open the leaderboard automatically. The finished board (with its Review
+// button) stays underneath, so the player can still review their own game.
+async function submitGameOver(score, seed, moves) {
+    try {
+        await saveHighScore(score, seed, moves);
+    } catch (error) {
+        console.error("Error submitting game-over score:", error);
+    }
+    currentMenuTab = "leaderboards";
+    currentSubTab.leaderboards = "today";
+    storeItem("currentMenuTab", currentMenuTab);
+    storeItem("currentSubTab", currentSubTab);
+    menuScrollY = 0;
+    await fetchTopScores(false);
+    showMenu = true;
+    storeItem("showMenu", showMenu);
+    loop();
+}
 
 function formatTime(ms) {
     let totalSeconds = Math.floor(ms / 1000);
@@ -824,6 +847,7 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
     let subTab = currentSubTab.leaderboards;
     let topScores;
     let emptyMessage;
+    leaderboardRowBounds = [];
 
     if (subTab === "alltime") {
         topScores = topScoresAllTime;
@@ -865,6 +889,10 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
             }
 
             text(displayText, panelX + 20, y);
+            // Record a click target for records that carry a replayable game.
+            if (scoreData.seed != null && scoreData.moves) {
+                leaderboardRowBounds.push({ x: panelX + 10, y: y - 12, w: panelWidth - 20, h: 24, record: scoreData });
+            }
             y += 25;
         }
     }
@@ -1700,6 +1728,12 @@ function handleDocumentClick(event) {
 }
 
 function onClick() {
+    if (grid.gameOver && grid.settled && gameOverReviewButton &&
+        mouseX >= gameOverReviewButton.x && mouseX <= gameOverReviewButton.x + gameOverReviewButton.w &&
+        mouseY >= gameOverReviewButton.y && mouseY <= gameOverReviewButton.y + gameOverReviewButton.h) {
+        openReview(currentUserDisplayName || "You", grid.seed, grid.moves.join(""));
+        return;
+    }
     if (mouseY < 80) {
         // Header area - always accessible
         if (mouseX > width - 80) {
@@ -1833,6 +1867,17 @@ function onClick() {
                         saveSettings();
                         redraw();
                         return;
+                    }
+                }
+
+                // Check if clicking a leaderboard record -> open its review
+                if (currentMenuTab === "leaderboards") {
+                    for (let rb of leaderboardRowBounds) {
+                        if (mouseX >= rb.x && mouseX <= rb.x + rb.w &&
+                            mouseY >= rb.y && mouseY <= rb.y + rb.h) {
+                            openReview(rb.record.displayName, rb.record.seed, rb.record.moves);
+                            return;
+                        }
                     }
                 }
 

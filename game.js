@@ -237,17 +237,14 @@ class NumberGrid {
                     updatePersonalWorst(this.score);
                     // Add to game history
                     addToGameHistory(this.score);
-                    // Schedule leaderboard popup (handled in draw loop)
-                    gameOverPopupPending = true;
-                    gameOverSettledTime = null;
-                    gameOverLeaderboardReady = false;
-                    // Save score first, then fetch leaderboard (ensures new score is included)
-                    saveHighScore(this.score, this.seed, grid.moves.join("")).then(() => {
-                        return fetchTopScores(false);
-                    }).then(() => {
-                        gameOverLeaderboardReady = true;
-                        loop();
-                    });
+                    // Submit the score and, once the leaderboard reflects it,
+                    // open it automatically. The finished board and its Review
+                    // button stay underneath.
+                    if (typeof submitGameOver === 'function') {
+                        submitGameOver(this.score, this.seed, grid.moves.join(""));
+                    } else {
+                        saveHighScore(this.score, this.seed, grid.moves.join(""));
+                    }
                 }
             }
             // Save moves for both ongoing games and game over (to persist game over state)

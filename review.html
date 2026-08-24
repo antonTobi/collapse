@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Collapse — Game Review</title>
+    <link rel="icon" href="favicon/favicon.ico">
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #e4e4e4;
+            --ink: #111;
+            --muted: #666;
+            --accent: #22baac;
+            --board-bg: #d7d7d7;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        /* Mobile-first: a single centred column that grows to the viewport width
+           and never past the board's natural 400px. style.css centres the body. */
+        body {
+            min-height: 100%;
+            padding: 16px;
+            background: var(--bg);
+            color: var(--ink);
+            align-items: flex-start;
+        }
+
+        #app {
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        #back {
+            align-self: stretch;
+        }
+
+        #topbar {
+            text-align: center;
+        }
+
+        #score {
+            font-size: 36px;
+            line-height: 43px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #reviewer {
+            font-size: 15px;
+            color: var(--muted);
+        }
+
+        /* Fixed square that scales with the column. The canvas backing store is
+           sized for the device pixel ratio in review.js. */
+        #board {
+            width: 100%;
+            max-width: 400px;
+            aspect-ratio: 1 / 1;
+            display: block;
+            margin: 0 auto;
+            background: var(--board-bg);
+            touch-action: none;
+            transition: box-shadow .15s;
+        }
+
+        /* Off the recorded line the board gets an accent frame so it is always
+           obvious the game on screen is a branching variation. */
+        #app.variation #board {
+            box-shadow: 0 0 0 3px var(--accent);
+        }
+
+        button {
+            font: inherit;
+            background: transparent;
+            border: 1px solid #111;
+            border-radius: 3px;
+            padding: 7px 11px;
+            cursor: pointer;
+            color: inherit;
+        }
+
+        button:disabled {
+            opacity: .5;
+            cursor: default;
+        }
+
+        button.primary {
+            background: #111;
+            color: #fff;
+        }
+
+        /* Toggled-on state (playing / fast-forwarding / afterstate shown). */
+        button.active {
+            background: #111;
+            color: #fff;
+        }
+
+        /* Hover only where a real pointer can hover, so a tap on a touch screen
+           does not leave the button stuck looking hovered after release. */
+        @media (hover: hover) and (pointer: fine) {
+            button:hover {
+                background: #111;
+                color: #fff;
+            }
+
+            button:disabled:hover {
+                background: transparent;
+                color: inherit;
+            }
+
+            button.primary:hover {
+                background: #333;
+            }
+        }
+
+        /* Lucide icons ride on currentColor; buttons flip colour on active/hover. */
+        svg.icon {
+            width: 20px;
+            height: 20px;
+            display: block;
+        }
+
+        #back svg.icon {
+            width: 18px;
+            height: 18px;
+        }
+
+        #back {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+        }
+
+        #controls {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #controls button {
+            min-width: 46px;
+            height: 40px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 8px;
+        }
+
+        #timeline {
+            margin: 4px 5px 0;
+        }
+
+        #scrub {
+            width: 100%;
+            margin: 0;
+            accent-color: var(--ink);
+            display: block;
+        }
+
+        #move {
+            color: var(--muted);
+            font-size: 14px;
+            font-variant-numeric: tabular-nums;
+            text-align: center;
+        }
+
+        /* Mistake jump-buttons, chronological. Sits below the controls, so it can
+           appear after the review finishes without moving anything above it. */
+        #mistakes {
+            display: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #mistakes.on {
+            display: flex;
+        }
+
+        #mistakes .mlabel {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        #mistakes .mbtn {
+            padding: 4px 8px;
+            font-size: 13px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        #loading {
+            min-height: 18px;
+            color: var(--muted);
+            font-size: 14px;
+            text-align: center;
+        }
+
+        #loading[hidden] {
+            display: none;
+        }
+
+        /* "Show bot suggestion" toggle for the dashed marker on the board. */
+        #suggestion {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            font-size: 14px;
+            color: var(--muted);
+            user-select: none;
+            visibility: hidden;
+        }
+
+        #suggestion.on {
+            visibility: visible;
+        }
+
+        #suggestion input {
+            margin: 0;
+            accent-color: var(--ink);
+        }
+
+        #empty {
+            max-width: 400px;
+            text-align: center;
+            line-height: 1.5;
+            margin: 0 auto;
+        }
+    </style>
+    <script src="config.js" defer></script>
+    <script src="bot/engine.js" defer></script>
+    <script src="bot/eval.js" defer></script>
+    <script src="bot/ntuple.js" defer></script>
+    <script src="bot/search.js" defer></script>
+    <script src="bot/agents.js" defer></script>
+    <script src="review.js" defer></script>
+</head>
+
+<body>
+    <main id="app" hidden>
+        <button id="back" title="Back to game">Back to game</button>
+        <header id="topbar">
+            <div id="score">0</div>
+            <div id="reviewer">Reviewing game</div>
+        </header>
+        <canvas id="board" width="400" height="400" aria-label="Game board"></canvas>
+        <div id="suggestion">
+            <label><input type="checkbox" id="showSuggestion"> Show bot suggestion</label>
+        </div>
+        <div id="controls">
+            <button id="first" title="First (Home)"></button>
+            <button id="backMove" title="Step back (←)"></button>
+            <button id="play" title="Play with animation (Space)"></button>
+            <button id="ff" title="Fast-forward, no animation (F)"></button>
+            <button id="step" title="Step forward (→)"></button>
+            <button id="last" title="Skip to end (End)"></button>
+        </div>
+        <div id="timeline"><input id="scrub" type="range" min="0" max="0" value="0" aria-label="Review move"></div>
+        <div id="move">Move 0</div>
+        <div id="mistakes"></div>
+        <div id="loading" hidden></div>
+    </main>
+    <section id="empty" hidden>
+        <p>There is no finished game ready to review.</p>
+        <button onclick="location.href='index.html'">← Back to game</button>
+    </section>
+</body>
+
+</html>
