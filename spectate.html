@@ -55,6 +55,22 @@
 
         .tile.clicked { outline: 4px solid #fff; outline-offset: -4px; }
 
+        .tile.legal { cursor: pointer; }
+
+        /* Where the reviewing bot would have played instead. White, like the
+           tile numbers, which read on every tile colour -- dashed, so it is
+           never confused with the solid outline of the move actually played. */
+        .tile.suggest { outline: 4px dashed #fff; outline-offset: -4px; }
+
+        .loss {
+            position: absolute;
+            top: 2px;
+            left: 5px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fff;
+        }
+
         .tile.pop { animation: pop .22s ease-out; }
 
         @keyframes pop { from { transform: scale(1.22); } to { transform: scale(1); } }
@@ -114,7 +130,7 @@
 
         #stats b { float: right; font-variant-numeric: tabular-nums; }
 
-        #score { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        #score { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 0 0 8px; }
 
         #splits { color: var(--muted); font-size: 12px; word-spacing: 4px; margin-top: 6px; min-height: 16px; }
 
@@ -127,6 +143,7 @@
 <body>
     <div>
         <h1>COLLAPSE — BOT SPECTATOR</h1>
+        <div id="score">0</div>
         <div id="board"></div>
     </div>
 
@@ -134,6 +151,19 @@
         <div class="row">
             <label for="agent">Agent</label>
             <select id="agent"></select>
+        </div>
+        <div class="row">
+            <label for="boardmode">Board</label>
+            <select id="boardmode">
+                <option value="">5x5 - full game</option>
+                <option value="grid54">5x4 - bottom row walled</option>
+                <option value="grid45">4x5 - right column walled</option>
+                <option value="grid44">4x4 - both walled</option>
+            </select>
+        </div>
+        <div class="row">
+            <label for="replay">Replay</label>
+            <select id="replay"></select>
         </div>
         <div class="row">
             <label for="seed">Seed</label>
@@ -163,10 +193,17 @@
         </div>
         <div class="row">
             <button id="reset">Replay this seed</button>
+            <button id="review" title="Search every move at depth 2 (cap 64) with the compressed 39-bank net">🔍 Review game</button>
+        </div>
+        <div class="row">
+            <button id="continueReview" title="Let the review bot play from the current position">▶ Continue with review bot</button>
+        </div>
+        <div class="row" id="mistakeRow" style="display:none;flex-wrap:wrap">
+            <label style="min-width:0">Mistakes</label>
+            <span id="mistakes" style="display:flex;gap:6px;flex-wrap:wrap"></span>
         </div>
 
         <div id="stats">
-            <div id="score">0</div>
             <div id="splits"></div>
             <hr style="border:none;border-top:1px solid #3a3a3a;margin:10px 0">
             <div>Moves played <b id="movecount">0</b></div>
@@ -178,17 +215,49 @@
 
         <div class="hint">
             The whole game is played out headlessly the moment you pick a seed, then
-            loaded as a replay. Scrub with the slider, step with ← and →, jump with
-            Home and End. The outlined tile is the move the agent plays <em>next</em>
-            from the position on screen.
-            "Show move evaluations" prints every candidate move's value at the current
-            position, so you can see what the agent rejected and by how much.
+            loaded as a replay. The <b>Replay</b> dropdown loads a saved game
+            instead: those are stored as a seed plus a move list, so they appear
+            instantly and need no weights file, which is the only practical way
+            to watch the depth-3 agents (playing one of those out in the page
+            takes the better part of a minute). Saved replays have no per-move
+            evaluations - pick the agent and seed directly if you want those.
             <br><br>
-            Agents marked <b>net</b> use the learned value function and fetch a
-            weights file, so this page has to be served over http for them
-            (<code>npx serve</code> in the repo root, then open
-            <code>/spectate.html</code>). The hand-weighted agents work from a
-            plain <code>file://</code> path.
+            <b>Review game</b> scores every position of the loaded game with a
+            depth-2 expectimax search over the compressed 39-bank network
+            (17 MB rather than 140, and the same strength), and compares its
+            preferred move with the one actually played. It runs in two passes:
+            a cheap one over the whole game to find the candidates, then a
+            careful one over the biggest forty, which is what decides both the
+            order of the list and whether a candidate was really a mistake at
+            all. The position you are looking at is always re-scored carefully. Every legal move is
+            searched to the same depth (no root cliff), because a deep value for
+            one move is not comparable with a shallow one for its rivals. A dashed outline marks
+            the bot's choice when it differs, with the value it thinks was thrown
+            away by not playing it. The five biggest of those are listed as
+            buttons, and keys <b>1</b>-<b>5</b> jump straight to them.
+            <br><br>
+            Only positions above a minimum loss are listed, so a clean game lists
+            nothing rather than padding the row out with five harmless moves. The
+            listed ones are real: rolled out over 1 604 held-out human positions,
+            a listed position costs <b>55 ± 23</b> points on average against 2
+            for a position picked at random, and the largest ones (a shown loss
+            above 400) cost about <b>171</b>. The shown number is the bot's own
+            estimate and runs several times high against a greedy playout, so
+            read it as a ranking rather than as a price - and trust the order of
+            the list far more than the gaps between its entries.
+            <br><br>
+            <b>Board</b> walls off a row and/or a column with 6s. A 6 can never
+            be collapsed, so a wall of them is exactly a smaller board - which is
+            how the shorter games used for fast experiments are made. The same
+            networks play them with no modification.
+            <br><br>
+            Hover a legal move to see its afterstate: the collapse and gravity,
+            before any new tiles refill the board.
+            <br><br>
+            <b>Continue with review bot</b> branches from the position on screen
+            and plays using the same configuration as Review game. Its speed is
+            controlled by the same Speed slider; return at any time to restore
+            the original replay position.
         </div>
     </div>
 

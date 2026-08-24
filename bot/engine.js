@@ -26,6 +26,27 @@
     const A = 1664525;
     const C = 1013904223;
 
+    // An alternative tile generator, for checking that nothing has learned to
+    // exploit the LCG. The LCG is fine where it matters -- it takes the high
+    // bits, whose period is full, rather than the low bits, whose period is
+    // 2^(k+1) -- but consecutive outputs of any LCG lie on lattice hyperplanes,
+    // and a refill of h holes draws h *consecutive* values. If reducing those
+    // tuples to 3 or 4 tile values left a bias, a network trained on LCG games
+    // would have learned the biased distribution.
+    //
+    // This replaces the recurrence with a counter run through the murmur3
+    // finalizer: no lattice, near-perfect avalanche, and structurally unrelated
+    // to the LCG. Selected with COLLAPSE_RNG=hash so the default stays exactly
+    // as it was; the point is that swapping generators must not move the score.
+    const ALT_RNG = (typeof process !== 'undefined' && process.env &&
+        process.env.COLLAPSE_RNG === 'hash');
+
+    function hash32(x) {
+        x = Math.imul(x ^ (x >>> 16), 2246822507);
+        x = Math.imul(x ^ (x >>> 13), 3266489909);
+        return (x ^ (x >>> 16)) >>> 0;
+    }
+
     const ALPHABET = "abcdefghijklmnopqrstuvwxyz";
 
     // --- scratch buffers (shared, single-threaded) -------------------------
@@ -107,6 +128,7 @@
             const g = Object.create(Game.prototype);
             g.seed = this.seed;
             g.rngState = this.rngState;
+            g.rngDraws = this.rngDraws;
             g.maxGen = this.maxGen;
             g.score = this.score;
             g.cells = this.cells.slice();
@@ -123,6 +145,13 @@
             if (this.fill === FILL_SIX) return 6;
             if (this.fill === FILL_NONE) return 0;
             if (this.fill === FILL_SAMPLE) return Math.floor(this.maxGen * this.sampleRng()) + 1;
+            if (ALT_RNG) {
+                // Counter-based: the stream depends on the seed and on how many
+                // tiles have been drawn, with no recurrence between them.
+                this.rngDraws = (this.rngDraws || 0) + 1;
+                const r = hash32(Math.imul(this.seed | 0, 2654435761) + this.rngDraws);
+                return Math.floor((this.maxGen * r) / M) + 1;
+            }
             this.rngState = (this.rngState * A + C) % M;
             return Math.floor((this.maxGen * this.rngState) / M) + 1;
         }

@@ -12,6 +12,13 @@ of compute shows up immediately.
 
 | # | agent spec | n | mean | ±se | median | min | max | moves | 6s | ms/move |
 | - | ---------- | -: | ---: | --: | -----: | --: | --: | ----: | -: | ------: |
+| 24 | `fx:weights=bot/weights/dom21c.bin,depth=3,cap=64,capDeep=4,topk=3,rootk=8` | 200 | **10925** | 54 | 10964 | 7738 | 12413 | 1108 | 14.9 | 57.6 |
+| 23 | `fx:weights=bot/weights/dom21q.bin,depth=2,cap=16,capDeep=2,topk=2,rootk=6,esc=6` | 200 | 10449 | 52 | 10498 | 7975 | 11935 | 1060 | 14.8 | 1.01 |
+| 22 | `fx:weights=bot/weights/dom21q.bin,depth=2,cap=8,capDeep=2,topk=2,rootk=6` | 200 | 10128 | 72 | 10279 | 1698 | 12212 | 1025 | 14.5 | 0.52 |
+| 21 | `fx:weights=bot/weights/dom21c.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6` | 100 | **10856** | 86 | 11019 | 6317 | 12163 | 1099 | 14.9 | 12.5 |
+| 20 | `fx:weights=bot/weights/dom21c.bin,depth=2,cap=16,rootk=6` | 200 | 10435 | 57 | 10459 | 4232 | 12203 | 1057 | 15.0 | 0.94 |
+| 19 | `fx:weights=bot/weights/dom21.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6` | 100 | **10822** | 85 | 10962 | 6317 | 12163 | 1096 | 14.9 | 19.2 |
+| 18 | `fx:weights=bot/weights/dom21.bin,depth=2,cap=16,rootk=6` | 200 | 10434 | 57 | 10459 | 4232 | 12203 | 1057 | 15.1 | 1.6 |
 | 17 | `fx:weights=bot/weights/bigx-s7.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6` | 100 | **10526** | 74 | 10627 | 8477 | 12152 | 1063 | 14.9 | 46.3 |
 | 16 | `fx:weights=bot/weights/bigx-s7.bin,depth=2,cap=16,rootk=6` | 100 | 10116 | 85 | 10269 | 6330 | 12112 | 1025 | 15.1 | 3.3 |
 | 15 | `td:weights=bot/weights/bigx-s7.bin` (greedy) | 100 | 8595 | 115 | 8821 | 1388 | 10495 | 852 | 13.8 | 0.10 |
@@ -33,6 +40,36 @@ of compute shows up immediately.
 | 1 | `linear:preset=v1` | 100 | 2619 | 75 | 2548 | 1167 | 4756 | 283 | 7.6 | 0.07 |
 | 0 | `maxmoves` | 100 | 855 | 19 | 855 | 390 | 1309 | 104 | 8.2 | 0.07 |
 | — | `random` | 100 | 469 | 12 | 459 | 101 | 1000 | 54 | 3.6 | 0.01 |
+
+Entries 18-19 use `dom21.bin`, the mirror-reduced 78-tuple network with
+dominoes and 21 banks (7 six-count bins x 3 five-group bins), grown from
+`bigx-s7.bin` without changing the function it computed and then trained for 6M
+episodes. Entry 19 was measured *against* entry 17 in a single paired run:
+**63W 0D 37L, +281 +- 115**, and 19.2 ms/move against 25.7 in that same run.
+
+Entries 20-21 are entries 18-19 after `bot/compact.js`, which folds every tuple
+whose cells are a strict subset of another tuple's into the tuple that contains
+it. That is exact -- the container's reading determines the subset's -- so the
+value function is unchanged and only the cost of computing it falls: 78 tuples
+to 28, 308 cell reads to 154, verified to 3.7e-4 on 50 457 real afterstates.
+Measured against its own uncompacted self in one paired run: **1.88x** at depth 2
+(1.77 -> 0.94 ms/move, 1W 199D 0L) and **1.61x** at depth 3 (20.2 -> 12.5, 6W 90D
+4L). The handful of decided games are float-rounding tie-breaks, not strength --
+the +34 in entry 21 is noise, and the honest reading of 20-21 is "same agent,
+1.6-1.9x cheaper".
+
+This does not contradict the finding that subset tuples earn their place. They
+are worth a great deal *while learning* -- a domino table has 49 entries, so
+every one is visited constantly and generalises over the 23 cells it ignores,
+which is why adding them was worth +984. Compaction is a deployment step: train
+with the subsets, ship without them.
+
+Read `ms/move` down a column with care: it depends on what else the machine was
+doing. Entry 17 reads 46.3 from a run made while a trainer was using ten cores
+and 25.7 when re-measured on an idle machine. Only figures from the same run
+compare -- which is why the 1.34x speedup above is quoted from the paired run
+rather than from the two rows. The speedup is real and structural: mirror
+reduction dropped evaluation from 190 table lookups to 135.
 
 `n` is how many seeds the row was measured over — always starting at seed 1, so
 every row covers seeds 1-100 and some cover 1-200.
@@ -994,6 +1031,9 @@ agent on the same seeds.
 | `--lambda 0.85` | unstable; oscillates by 2000 points between reports |
 | Banking on playable area instead of the 6-count | correlates -0.999 with the 6-count in real play; the same information |
 | Skipping the search when the 1-ply gap is large | no safe threshold exists; see the table above |
+| Correcting V's off-policy bias with a rank-conditional constant | **−1097 to −4980** on seeds 1-150. The bias is real and systematic, but its mean-by-rank carries no move-choice signal. See "The value network's Bellman residual" below |
+| Uniform-random exploration during training (`--explore-rank` over all moves) | ruinous: eps=0.005/0.02/0.05 scores 7957/6379/4762 against greedy's 8830. A random move wastes structure that cannot be rebuilt |
+| Shrinking V toward the position mean, `argmax(gain + c*V)` | −253 at c=0.9 down to −978 at c=0.5. See the trap below |
 
 **A bug worth the embarrassment.** `search.js` capped a position's move list at
 16 with a comment claiming canonical moves never approach that. Real positions
@@ -1003,6 +1043,165 @@ was found is the lesson: a single 100-seed run of the fixed version looked 141
 points *worse*, and only a paired comparison showed the truth. Changing anything
 that alters 1.6% of decisions makes 85% of games diverge completely, so
 comparing two separate runs measures divergence, not the change.
+
+### The capacity ladder
+
+Every trained network in the folder on the same 200 seeds, greedy and depth 2
+`cap=16`. Capacity and episodes are confounded — each later net got more of both
+— so read the trend, not the individual steps.
+
+| net | weights | banks | greedy | depth 2 | search gain | greedy/doubling | depth2/doubling |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `c_base` | 0.09M | 1 | 5527 | 7028 | +1501 ± 101 | — | — |
+| `big-td` | 3.08M | 1 | 7834 | 9269 | +1435 ± 80 | 448 | 435 |
+| `big-s3` | 9.23M | 3 | 8150 | 9857 | +1706 ± 90 | 199 | 371 |
+| `bigx-s7` | 22.82M | 7 | 8639 | 10090 | +1451 ± 104 | 375 | 179 |
+| `dom21c` | 39.53M | 21 | 8727 | 10381 | +1655 ± 114 | 111 | 367 |
+
+Capacity pays ~240 per doubling greedy and ~370 at depth 2, with no clean
+saturation. **The search gain does not shrink**: 460x the weights leaves it at
+17-21%. Whatever the lookahead is supplying, more parameters have not been
+supplying it — which is the same conclusion the six failed attempts in SCALING.md
+reach from the other direction.
+
+### Refining the 6-count banks: dom39
+
+`dom21` with `--edges` refined from `2,4,6,8,10,12` to every boundary below 12 —
+7 six-bins to 13, 21 banks to 39, 40.9M weights to 75.9M. `grow.js` copied it
+exactly (`max |dV| = 0`), so it began at `dom21`'s own score and everything after
+went into the new capacity. All rows fully annealed, 3000 games per cell:
+
+| network | cumulative ep | seeds 1-3000 | seeds 700M+ | pooled vs `dom21c` |
+| --- | ---: | ---: | ---: | ---: |
+| `dom21c` | — | 8807 ± 22 | 8872 ± 21 | — |
+| `dom39` | 3.2M | 8858 ± 23 | 8855 ± 22 | +17 ± 21 |
+| `dom39` | 6.2M | **8913 ± 21** | **8892 ± 22** | **+63 ± 21** |
+
+Final, after 12.5M episodes on the refined architecture and annealed to the same
+alpha `dom21` finished at:
+
+| comparison | seeds | result |
+| ---------- | ----: | -----: |
+| greedy, `dom39` vs `dom21c` | 3000 x 2 ranges | **+54 ± 21** |
+| depth 2 `cap=16`, `dom39q` vs `dom21q` | 1500 | **+106 ± 33** |
+| cost per move, depth 2 / depth 3 | — | **+1.4% / +0%** |
+
+The refinement pays, and it was still climbing when the schedule ended: +46 ± 22
+over the 3M episodes before the last stage. It is also nearly free to play with —
+1.86x the weights costs 1.4% per move at depth 2 and nothing at depth 3, because
+after compaction a leaf is 28 lookups whatever the table size (`bot/timing.js`).
+
+Two cautions. **The gain is a quarter of what the capacity ladder extrapolated**
+— ~240 per doubling would have predicted +216 for 1.86x the weights, and the
+ladder over-promises because capacity and episodes are confounded in every one of
+its rungs. And **there is no matched-episode control**: some unknown part of the
++54 is simply 12.5M more episodes rather than the extra banks. `dom21.bin` is
+still on disk if that is worth closing. Note the schedule matters as much as the architecture — 2.65M episodes
+at alpha 0.005 moved it by nothing, and 250k at 0.02 plus an anneal moved it +45.
+Differentiation rate scales with alpha; the noise that comes with it is temporary.
+
+Where the moves actually are, which is why this edge set and not a finer one:
+15/13/12/10/9/7/7/6/5/3/3/2/6% of moves fall in the 13 bins, against 28% in the
+busiest of the old 7. The `12+` bin is left coarse deliberately — games end
+around 13.6 sixes but only 6% of *moves* are played there.
+
+### Two ways to measure this wrong, both paid for
+
+**The self-play mean in `ptrain`'s log is not a benchmark.** It is measured on
+the training seeds, which advance as the run proceeds, and those score higher
+than seeds 1-2000 by ~70 points. Reading it as a progress curve produced a clean
+"three consecutive +58 per million" trend that was substantially the seed range
+rather than the network.
+
+**A network and its reference must be measured on the same seeds.** Identical
+weights scored 8781 / 8811 / 8857 on three 2000-game seed ranges — a 76-point
+spread. The claim elsewhere in this file that seeds are not meaningfully easier
+or harder holds at the ±100 of a 200-seed comparison and fails at the ±25 of a
+2000-seed one.
+
+### You cannot benchmark a network mid-run at a high alpha
+
+The same weights, measured twice on 2000 seeds:
+
+| network | mean | vs `dom21c` (8824 ± 26) |
+| --- | ---: | ---: |
+| `dom39` after 250k episodes at alpha 0.02 | 8722 ± 26 | **-102** |
+| the same weights, +300k episodes at alpha 0.002 | **8845 ± 28** | **+21** |
+
+**+123 points from annealing alone**, with no new information learned. TD at step
+`alpha` carries a stationary weight noise proportional to `sqrt(alpha)`, and this
+game punishes it hard because every move is an argmax over siblings — the same
+max-node effect that costs ~13 points per unit of off-axis rms elsewhere in this
+file. Running at 0.02 rather than 0.002 doubles that noise and costs ~100 points
+for as long as it lasts. None of it is damage; all of it anneals away.
+
+Three consequences:
+
+- **A mid-run benchmark measures the noise floor, not the network.** `dom21`'s own
+  run would have looked ~100 points depressed for most of its length. Read the
+  *trend* between consecutive reports at near-constant alpha, or anneal a branch
+  before believing a level.
+- **It makes a cautious alpha look better than it is.** 250k episodes at 0.02
+  followed by 300k of annealing beat 2.65M episodes at 0.005 by **+45 ± 40** —
+  10x fewer episodes, more structure, because differentiation rate scales with
+  alpha while the noise it brings is temporary.
+- **Size the anneal properly or it reads as a failure.** The noise decays over
+  roughly `1/alpha` updates per weight; at alpha 0.002 with ~156 weights touched
+  per position that is ~280k episodes. A 50k-episode anneal would have shown
+  nothing and "confirmed" the wrong conclusion.
+- **Do not try to correct for it arithmetically.** Scaling the measured level by
+  `sqrt(alpha)` looks principled and is not good enough: it read 3M episodes of
+  stage-3 training as *flat* when an actual anneal showed **+46 ± 22**. The model
+  cannot resolve a 50-point effect. Either anneal a branch (25 minutes) or say
+  "unknown until annealed" — those are the only two honest options.
+
+### The value network's Bellman residual
+
+The measurement that explains why search is worth what it is worth. For an
+afterstate `s`, `R(s) = E_refill[max_a (gain+V)] - V(s)` — what one Bellman
+backup adds to V's own opinion, zero at the TD(0) fixed point. `bot/residual.js`
+reads it. Written out, a depth-*d* root value is `(gain + V(after)) + R(after)`:
+the greedy score plus the residual, so a search with `R = 0` would *be* greedy.
+
+`dom21c`, greedy trajectories, by shallow rank of the move:
+
+| rank | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8+ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| residual | **0.7** | 7.1 | 13.7 | 22.7 | 34.2 | 52.5 | 70.7 | 162.2 |
+
+Zero where TD walks, positive everywhere else — and it is coverage, not
+regression to the mean, because the *rank-1* residual (same statistic, same
+selection) reads 1.1 / 13.4 / 20.1 / 29.7 / 50.3 after 0 / 1 / 2 / 3 / 5 random
+deviations from the trajectory.
+
+**A regression trap, recorded because it cost an hour and looked like a
+one-parameter free win.** Within a position, regressing `R` on `V(after)` across
+the candidates gives slope **-0.262** (r² 0.335), which reads as "26% of V's
+spread across candidates is noise, so shrink it" — and since `R = a - b*V` makes
+a depth-2 search algebraically identical to `argmax(gain + (1-b)*V)`, that is a
+scalar away from free. It is not: `argmax(gain + c*V)` scores -253 at c=0.9 and
+-978 at c=0.5.
+
+The slope is an artefact and it could have been predicted. `R = TV - V` contains
+`-V` by construction, so with any within-position error `e` in V,
+`cov(R,V) = var(TV) - var(TV) - var(e) = -var(e)`, and the slope is
+`-var(e)/var(V)` *whatever* V is. Regressing a residual on the thing it was
+subtracted from is guaranteed to slope down. (Pooled across positions the slope
+is -0.001, r² 0.000 — V is not globally shrunk, which is the honest version of
+the same check.) The other 67% of `R`'s variance is per-position content that
+only a real backup produces, which is the whole reason search is worth
+something.
+
+Two things follow that are easy to get backwards:
+
+- **V is not badly calibrated.** Over greedy self-play its mean is 4334 against
+  a mean actual remaining score of 4342 — 8 points out of 4334. The −1268 bias
+  in SCALING.md is V predicting the greedy continuation correctly while the game
+  is played out with search.
+- **The level does not matter; the spread does.** A constant added to every
+  candidate changes no move. This is why a search-derived TD target measured as
+  nothing (it moves the level), and why the rank-offset correction in the table
+  above loses thousands of points.
 
 ### Fine-tuning on the search policy's trajectories
 

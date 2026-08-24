@@ -26,6 +26,7 @@ Thumbs.db
 # Allow-list rather than deny-list: every new training run produces another
 # large .bin, and listing them one by one gets one of them wrong eventually.
 bot/weights/*.bin
+bot/weights/*.bins
 !bot/weights/big-td.bin
 !bot/weights/c_base.bin
 !bot/weights/td1.bin

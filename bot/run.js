@@ -17,7 +17,7 @@ const Collapse = require('./engine.js');
 const { createAgent, agentNames } = require('./agents.js');
 
 function parseArgs(argv) {
-    const args = { agents: ['random', 'maxmoves'], seeds: 25, seedBase: 1, verbose: false, jobs: 1, json: false, dist: 0 };
+    const args = { agents: ['random', 'maxmoves'], seeds: 25, seedBase: 1, verbose: false, jobs: 1, json: false, dist: 0, sub: '' };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--agents') args.agents = argv[++i].split(/,(?![^:]*=)/).map(s => s.trim()).filter(Boolean);
@@ -29,6 +29,9 @@ function parseArgs(argv) {
         // the agent clears N. Mean alone hides whether an agent got there by
         // being reliable or by being lucky.
         else if (a === '--dist') args.dist = parseInt(argv[++i], 10);
+        // Shortened games, for studying how a search scales without paying for
+        // 1000-move games at a second a move. See subGame().
+        else if (a === '--sub') args.sub = argv[++i];
         else if (a === '--verbose' || a === '-v') args.verbose = true;
         else if (a === '--list') { console.log(agentNames().join('\n')); process.exit(0); }
         else { console.error('Unknown option: ' + a); process.exit(1); }
@@ -50,12 +53,51 @@ function stats(xs) {
     };
 }
 
+// Shortened variants of the game, so that a search costing a second a move can
+// still be measured. Two kinds, because they shorten different halves:
+//
+//   grid54 / grid45 / grid44   wall off a row and/or a column with 6s and play
+//                              a full game on what is left. 6s are permanent
+//                              and unplayable, so a wall of them is exactly a
+//                              smaller board -- and the network already knows
+//                              how to read boards full of 6s, so no retraining
+//                              is needed. Shorter games, same objective.
+//   first6                     stop the moment the first 6 appears. This is the
+//                              opening only, and the agent is still playing for
+//                              the full-game value, so read it as "how well is
+//                              the opening played" rather than as a game.
+//
+// Whether either correlates with full-game strength is an empirical question
+// and is checked before they are used for anything -- a proxy nobody validated
+// is worse than no proxy.
+function subStart(mode, seed) {
+    const g = new Collapse.Game(seed);
+    const cells = Array.from(g.cells);
+    const W = Collapse.W, H = Collapse.H;
+    const wall = k => { cells[k] = 6; };
+    if (mode === 'grid54' || mode === 'grid44') for (let i = 0; i < W; i++) wall(i * H);
+    if (mode === 'grid45' || mode === 'grid44') for (let j = 0; j < H; j++) wall((W - 1) * H + j);
+    return Collapse.fromCells(cells, seed);
+}
+
+function playSub(agent, seed, mode) {
+    const stopAtSix = mode === 'first6';
+    const game = stopAtSix ? new Collapse.Game(seed) : subStart(mode, seed);
+    while (!game.gameOver && game.moves.length < 100000) {
+        const move = agent.chooseMove(game);
+        if (!move) break;
+        game.apply(move[0], move[1]);
+        if (stopAtSix && game.sixCount > 0) break;
+    }
+    return { score: game.score, moves: game.moves.length, sixes: game.sixCount };
+}
+
 // Run one agent over a list of seeds. Returns [{seed, score, moves, sixes, ms}]
-function runAgent(spec, seeds) {
+function runAgent(spec, seeds, sub) {
     return seeds.map(seed => {
         const agent = createAgent(spec, { seed });
         const t0 = process.hrtime.bigint();
-        const r = Collapse.playGame(agent, seed);
+        const r = sub ? playSub(agent, seed, sub) : Collapse.playGame(agent, seed);
         const ms = Number(process.hrtime.bigint() - t0) / 1e6;
         return { seed, score: r.score, moves: r.moves, sixes: r.sixes, ms };
     });
@@ -63,15 +105,15 @@ function runAgent(spec, seeds) {
 
 // --- worker mode -------------------------------------------------------------
 if (process.env.COLLAPSE_WORKER) {
-    process.on('message', ({ spec, seeds }) => {
-        process.send(runAgent(spec, seeds));
+    process.on('message', ({ spec, seeds, sub }) => {
+        process.send(runAgent(spec, seeds, sub));
         process.exit(0);
     });
     return;
 }
 
-function runAgentParallel(spec, seeds, jobs) {
-    if (jobs <= 1) return Promise.resolve(runAgent(spec, seeds));
+function runAgentParallel(spec, seeds, jobs, sub) {
+    if (jobs <= 1) return Promise.resolve(runAgent(spec, seeds, sub));
     const { fork } = require('child_process');
     const chunks = Array.from({ length: jobs }, () => []);
     seeds.forEach((s, k) => chunks[k % jobs].push(s));
@@ -80,7 +122,7 @@ function runAgentParallel(spec, seeds, jobs) {
         const child = fork(path.join(__dirname, 'run.js'), [], { env: Object.assign({}, process.env, { COLLAPSE_WORKER: '1' }) });
         child.on('message', resolve);
         child.on('error', reject);
-        child.send({ spec, seeds: chunk });
+        child.send({ spec, seeds: chunk, sub });
     }))).then(parts => {
         const byseed = new Map();
         parts.flat().forEach(r => byseed.set(r.seed, r));
@@ -96,7 +138,7 @@ async function main() {
     const results = {};
 
     for (const spec of args.agents) {
-        results[spec] = await runAgentParallel(spec, seeds, args.jobs);
+        results[spec] = await runAgentParallel(spec, seeds, args.jobs, args.sub);
     }
 
     if (args.json) {

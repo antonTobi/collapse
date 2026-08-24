@@ -81,18 +81,39 @@
     // built; spectate.js loads it and passes it in as `options.network`, which
     // is why those agents work in the browser at all.
     // SPECS[0] is what the page opens on, so it has to be an agent whose weight
-    // file is actually in the repository. `bigx-s7.bin` is 87 MB and gitignored
-    // (see bot/README.md), so the entries that use it only work once it has been
-    // trained locally -- they are listed anyway, because they are the strongest
-    // agents and this is where you would want to watch them.
+    // file is actually in the repository. `bigx-s7.bin` is 87 MB and `dom21.bin`
+    // is 156 MB; both are gitignored (see bot/README.md), so the entries that use
+    // them only work once they have been trained locally -- they are listed
+    // anyway, because they are the strongest agents and this is where you would
+    // want to watch them.
     //
     // Depth 2 comes before depth 3 within each network because building a replay
     // is synchronous: ~1000 moves at 3 ms is a blink, the same game at depth 3
-    // is the better part of a minute of frozen page.
+    // is the better part of a minute of frozen page. The `dom21c` entries are
+    // `dom21` after bot/compact.js -- the same function, 1.6-1.9x cheaper, so
+    // they are the ones to watch and depth 3 is no longer painfully slow.
     const SPECS = [
         { spec: 'fx:weights=bot/weights/big-td.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/big-td.bin', label: 'expectimax depth 2  (9315)' },
         { spec: 'fx:weights=bot/weights/big-td.bin,depth=2,cap=4,rootk=3', weights: 'bot/weights/big-td.bin', label: 'expectimax depth 2, cheap  (8746)' },
         { spec: 'td:weights=bot/weights/big-td.bin', weights: 'bot/weights/big-td.bin', label: 'big net, greedy, no search  (7799)' },
+        { spec: 'fx:weights=bot/weights/ab44-greedy.bin,depth=2,cap=16,capDeep=2,topk=2,rootk=6,crn=1', weights: 'bot/weights/ab44-greedy.bin', label: '4x4 experiment: first-pass greedy  (needs ab44-greedy.bin)' },
+        { spec: 'fx:weights=bot/weights/dom39q.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/dom39q.bin', label: 'expectimax depth 2, 39-bank net  (10496, needs dom39q.bin)' },
+        { spec: 'fx:weights=bot/weights/dom39q.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6', weights: 'bot/weights/dom39q.bin', label: 'expectimax depth 3, 39-bank net  (needs dom39q.bin)' },
+        { spec: 'td:weights=bot/weights/dom39q.bin', weights: 'bot/weights/dom39q.bin', label: '39-bank net, greedy, no search  (8890, needs dom39q.bin)' },
+        // Retrained on human start positions so that it prices its own close
+        // alternatives better off-distribution, at a cost of 733 points of
+        // playing strength. Read ANALYSIS.md before using it: it is *worse*
+        // than dom39q at reviewing a human game, because that job is dominated
+        // by picking the right reference move rather than by pricing the gap.
+        // Kept because the calibration result is real and reproducible, not
+        // because it is the right default for anything yet.
+        { spec: 'fx:weights=bot/weights/dom21hq.bin,depth=2,cap=64,topk=0,rootk=0', weights: 'bot/weights/dom21hq.bin', label: 'human-calibrated net, depth 2 full width  (see ANALYSIS.md, needs dom21hq.bin)' },
+        { spec: 'td:weights=bot/weights/dom21hq.bin', weights: 'bot/weights/dom21hq.bin', label: 'human-calibrated net, greedy  (8021, needs dom21hq.bin)' },
+        { spec: 'fx:weights=bot/weights/dom21c.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/dom21c.bin', label: 'expectimax depth 2, best net  (10435, needs dom21c.bin)' },
+        { spec: 'fx:weights=bot/weights/dom21c.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6', weights: 'bot/weights/dom21c.bin', label: 'expectimax depth 3, best net  (10856, needs dom21c.bin)' },
+        { spec: 'fx:weights=bot/weights/dom21.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/dom21.bin', label: 'expectimax depth 2, best net  (10434, needs dom21.bin)' },
+        { spec: 'fx:weights=bot/weights/dom21.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6', weights: 'bot/weights/dom21.bin', label: 'expectimax depth 3, best net  (10822, needs dom21.bin, slow)' },
+        { spec: 'td:weights=bot/weights/dom21.bin', weights: 'bot/weights/dom21.bin', label: 'best net, greedy, no search  (needs dom21.bin)' },
         { spec: 'fx:weights=bot/weights/bigx-s7.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/bigx-s7.bin', label: 'expectimax depth 2, best net  (10116, needs bigx-s7.bin)' },
         { spec: 'fx:weights=bot/weights/bigx-s7.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6', weights: 'bot/weights/bigx-s7.bin', label: 'expectimax depth 3, best net  (10526, needs bigx-s7.bin, slow)' },
         { spec: 'blend:preset=h1,weights=bot/weights/tdsym3.bin,beta=1', weights: 'bot/weights/tdsym3.bin', label: 'blend h1 + net  (6450)' },
@@ -655,6 +676,14 @@
             topk: options.topk,
             rootk: options.rootk,
             risk: options.risk,
+            norefill: options.norefill,
+            esc: options.esc,
+            escdepth: options.escdepth,
+            cvk: options.cvk,
+            grade: options.grade,
+            ms: options.ms,
+            crn: options.crn,
+            gap: options.gap,
             rng
         });
         return {
