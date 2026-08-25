@@ -91,7 +91,8 @@ const NT = require('./ntuple.js');
 
 function tally(net, cells, cnt) {
     const t = net.t, V = 7, BK = net.bank;
-    const bank = net.stageOf(cells) * BK;
+    cells = net.prepare(cells);
+    const bank = net.preparedStage(cells) * BK;
     for (let k = 0; k < t.n; k++) {
         const o = t.off[k], l = t.len[k], b = bank + t.wbase[k];
         let a = 0, m = 0;

@@ -29,6 +29,9 @@
 //   --distil K      regress the top K+1 candidates onto a FROZEN copy's backup.
 //                   ~5x, supervised, and the one with an exact statement of what
 //                   it is aiming at: greedy over TV plays depth-2's moves.
+//   --freeze-prefix SET
+//                   update only tuples appended after SET, preserving an
+//                   exact-grown evaluator while a correction module learns.
 // ============================================================================
 
 const path = require('path');
@@ -36,6 +39,16 @@ const { Worker, isMainThread, parentPort, workerData } = require('worker_threads
 const Collapse = require('./engine.js');
 const NTuple = require('./ntuple.js');
 const Search = require('./search.js');
+
+function isPrefix(small, big) {
+    if (small.n > big.n) return false;
+    for (let t = 0; t < small.n; t++) {
+        if (small.len[t] !== big.len[t]) return false;
+        for (let c = 0; c < small.len[t]; c++)
+            if (small.cells[small.off[t] + c] !== big.cells[big.off[t] + c]) return false;
+    }
+    return true;
+}
 
 function parseArgs(argv) {
     const a = {
@@ -45,7 +58,7 @@ function parseArgs(argv) {
         searchDepth: 1, searchCap: 16, searchCapDeep: 4, searchTopk: 2, searchRootk: 6, searchTarget: false, sub: '',
         lambdaEnd: -1, starts: null, startFrac: 0.5, startMoves: 0,
         siblings: 0, sibAlpha: 1, sibEvery: 1, sibCenter: false, explore: 0, exploreRank: 2,
-        distil: 0, frozen: null, rank: 0, rankK: 3
+        distil: 0, frozen: null, rank: 0, rankK: 3, freezePrefix: null, trainFrom: 0
     };
     for (let i = 2; i < argv.length; i++) {
         const k = argv[i];
@@ -84,6 +97,10 @@ function parseArgs(argv) {
         else if (k === '--frozen') a.frozen = argv[++i];
         else if (k === '--rank') a.rank = parseFloat(argv[++i]);
         else if (k === '--rank-k') a.rankK = parseInt(argv[++i], 10);
+        // When a larger architecture was made with grow.js, train only the
+        // appended correction tables first. This protects the known-strong
+        // evaluator while the new features learn from deliberately OOD starts.
+        else if (k === '--freeze-prefix') a.freezePrefix = argv[++i];
         // Train on a walled-off board. A 6 can never be collapsed, so a row and
         // a column of them is exactly a smaller game -- and the network reads
         // 6-heavy boards already, so no architecture change is needed. Games are
@@ -151,6 +168,7 @@ if (!isMainThread) {
     const { sab, meta, args, index, starts, frozen } = workerData;
     const weights = new Float32Array(sab);
     const net = new NTuple.Network(weights, meta);
+    const applyUpdate = (cells, delta) => net.update(cells, delta, args.trainFrom);
 
     // Best (reward + V(afterstate)) from a position. null when terminal.
     //
@@ -226,9 +244,11 @@ if (!isMainThread) {
         const wantSib = args.siblings > 0 && nm > 1 && curAlpha > 0 &&
             (args.sibEvery <= 1 || (sibClock++ % args.sibEvery) === 0);
         const wantDistil = fnet !== null && curAlpha > 0;
+        const wantRank = args.rank > 0 && nm > 1 && curAlpha > 0;
         const wantExplore = args.explore > 0 && nm > 1 && nextRandom() < args.explore;
         const keep = Math.max(wantSib ? args.siblings + 1 : 0,
-            wantDistil ? args.distil + 1 : 0, wantExplore ? args.exploreRank : 0);
+            wantDistil ? args.distil + 1 : 0, wantRank ? args.rankK + 1 : 0,
+            wantExplore ? args.exploreRank : 0);
         if (keep > 1) rank(nm, keep);
 
         // Fitted value iteration against a frozen target network.
@@ -257,7 +277,7 @@ if (!isMainThread) {
                 const s = n === 1 ? bs : shOrd[a];
                 const after = expander.board(s);
                 const t = backup(after, expander.nextGen(s), fnet);
-                net.update(after, curAlpha * (t - net.value(after)));
+                applyUpdate(after, curAlpha * (t - net.value(after)));
             }
         }
 
@@ -299,8 +319,8 @@ if (!isMainThread) {
             }
             if (star !== shOrd[0]) {
                 const step = curAlpha * args.rank;
-                net.update(expander.board(star), step);
-                net.update(expander.board(shOrd[0]), -step);
+                applyUpdate(expander.board(star), step);
+                applyUpdate(expander.board(shOrd[0]), -step);
             }
         }
 
@@ -335,7 +355,7 @@ if (!isMainThread) {
             }
             const base = args.sibCenter ? sibB[0] - sibV[0] : 0;
             for (let a = 1; a < n; a++) {
-                net.update(expander.board(shOrd[a]),
+                applyUpdate(expander.board(shOrd[a]),
                     curAlpha * args.sibAlpha * (sibB[a] - base - sibV[a]));
             }
         }
@@ -486,7 +506,7 @@ if (!isMainThread) {
                 const target = next ? (args.searchTarget ? next.value : next.qmax) : 0;
                 if (args.distil > 0) { /* best() already wrote the frozen-target updates */ }
                 else if (msg.lambda > 0) trail.push({ cells, target });
-                else net.update(cells, msg.alpha * (target - net.value(cells)));
+                else applyUpdate(cells, msg.alpha * (target - net.value(cells)));
                 cur = next;
             }
             if (msg.lambda > 0) {
@@ -494,7 +514,7 @@ if (!isMainThread) {
                 for (let t = trail.length - 1; t >= 0; t--) {
                     const err = trail[t].target - net.value(trail[t].cells);
                     carry = err + msg.lambda * carry;
-                    net.update(trail[t].cells, msg.alpha * carry);
+                    applyUpdate(trail[t].cells, msg.alpha * carry);
                 }
             }
             (seeded ? seededScores : scores).push(game.score);
@@ -515,6 +535,18 @@ async function main() {
         initial = loaded.w;
     } else {
         meta = { set: args.set, sym: args.sym, stages: args.stages };
+    }
+    if (args.freezePrefix) {
+        if (!args.resume) {
+            console.error('--freeze-prefix is only useful with a grown --resume network');
+            process.exit(1);
+        }
+        const small = NTuple.tupleSet(args.freezePrefix), big = NTuple.tupleSet(meta.set);
+        if (small.n >= big.n || !isPrefix(small, big)) {
+            console.error(`set "${args.freezePrefix}" is not a strict prefix of "${meta.set}"`);
+            process.exit(1);
+        }
+        args.trainFrom = small.n;
     }
     const size = new NTuple.Network(initial, meta).w.length;
 
@@ -560,7 +592,9 @@ async function main() {
         (args.explore ? '  explore=' + args.explore + ' rank ' + args.exploreRank : '') +
         (args.distil ? '  distil=' + args.distil + ' (frozen target)' : '') +
         (args.rank ? '  rank=' + args.rank + ' over top ' + (args.rankK + 1) +
-            (args.frozen ? ' (frozen)' : ' (live)') : ''));
+            (args.frozen ? ' (frozen)' : ' (live)') : '') +
+        (args.freezePrefix ? '  frozen-prefix=' + args.freezePrefix +
+            ' (' + args.trainFrom + ' tuples)' : ''));
 
     const chunk = Math.max(1, Math.round(args.report / args.jobs / 4));
     const workers = [];

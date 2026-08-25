@@ -60,6 +60,7 @@ function isPrefix(small, big) {
 function main() {
     const args = parseArgs(process.argv);
     const src = NTuple.load(args.in);
+    const srcWeights = src.w || src.toDense();
     const set = args.set || src.setName;
     const edges = args.edges || (args.stages ? null : src.edges);
     const stages = args.stages || src.sixBanks;
@@ -101,7 +102,7 @@ function main() {
     }
     for (let s = 0; s < dst.stages; s++) {
         const from = Math.max(0, claimed[s]);
-        dst.w.set(src.w.subarray(from * src.bank, (from + 1) * src.bank), s * dst.bank);
+        dst.w.set(srcWeights.subarray(from * src.bank, (from + 1) * src.bank), s * dst.bank);
     }
 
     // Verify on real boards, across the whole range of 6-counts so that every
@@ -136,13 +137,19 @@ function main() {
     // the boundaries is allowed but has to be reported honestly.
     const sameLayout = (JSON.stringify(src.edges) === JSON.stringify(dst.edges) || src.stages === 1)
         && (src.five === dst.five || !src.five);
-    if (worst > 1e-4 && sameLayout) {
+    // Expanding a sparse int16/int8 function materialises each scaled sum into
+    // Float32, so it is mathematically the same table with one final rounding.
+    // Dense-to-dense growth remains bit-exact; sparse expansion is accepted at
+    // a sub-millipoint tolerance (values are normally in the thousands).
+    const tolerance = src.sparse ? 1e-3 : 1e-4;
+    if (worst > tolerance && sameLayout) {
         console.error('grown network does not match the original (max diff ' + worst + ') — not writing');
         process.exit(1);
     }
 
     NTuple.save(args.out, dst);
-    console.log(`${args.in}  set=${src.setName} stages=${src.stages} weights=${src.w.length}`);
+    console.log(`${args.in}  set=${src.setName} stages=${src.stages} weights=${srcWeights.length}` +
+        (src.sparse ? ' (expanded from sparse)' : ''));
     console.log(`${args.out}  set=${set} stages=${dst.stages}` + (five ? ' (x3 by 5-groups)' : '') +
         ` weights=${dst.w.length}`);
     console.log(`identical on ${checked} boards (max |dV| = ${worst})`);
