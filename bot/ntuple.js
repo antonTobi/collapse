@@ -39,7 +39,35 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 
     const W = 5, H = 5, V = 7;
+    const BOARD_CELLS = W * H;
     const idx = (i, j) => i * H + j;
+
+    // Global categorical features live after the 25 physical cells. They are
+    // deliberately also 0..6, so a tuple can mix board cells and global facts
+    // without changing the base-7 tables or the weight-file format. Adding a
+    // new global feature is now one extractor entry and one tuple, rather than
+    // another complete bank of every local table.
+    const GLOBAL = Object.freeze({
+        SIXES: BOARD_CELLS,
+        FIVE_GROUPS: BOARD_CELLS + 1,
+        EQUAL_EDGES: BOARD_CELLS + 2,
+        PLAYABLE_CELLS: BOARD_CELLS + 3,
+        EXPOSED_SIXES: BOARD_CELLS + 4,
+        SINGLETONS: BOARD_CELLS + 5,
+        HOLES: BOARD_CELLS + 6,
+        HIGH_TILES: BOARD_CELLS + 7
+    });
+    const GLOBAL_NAMES = Object.freeze({
+        [GLOBAL.SIXES]: '6-count / 2 (12+ capped)',
+        [GLOBAL.FIVE_GROUPS]: '5-components (6+ capped)',
+        [GLOBAL.EQUAL_EDGES]: 'equal playable adjacencies / 3 (18+ capped)',
+        [GLOBAL.PLAYABLE_CELLS]: 'cells in legal groups / 3 (18+ capped)',
+        [GLOBAL.EXPOSED_SIXES]: 'exposed 6s (6+ capped)',
+        [GLOBAL.SINGLETONS]: 'singleton groups / 2 (12+ capped)',
+        [GLOBAL.HOLES]: 'holes (6+ capped)',
+        [GLOBAL.HIGH_TILES]: '4/5 tiles / 2 (12+ capped)'
+    });
+    const INPUT_CELLS = BOARD_CELLS + Object.keys(GLOBAL).length;
 
     // --- tuple sets ---------------------------------------------------------
 
@@ -95,6 +123,51 @@
         return t;
     }
 
+    // Sparse long-range interactions. The rectangle corners cover distances
+    // of three or four cells; the two diagonals are the only tuples in the
+    // first experiment whose receptive field crosses the whole board. The
+    // list is closed under left-right reflection so reduce.js can fold it.
+    function farTuples() {
+        const t = [];
+        const spans = [[0, 4], [0, 3], [1, 4]];
+        // Full-width rectangles at three vertical placements, plus a mirrored
+        // pair of full-height rectangles. This keeps the phone probe small
+        // while covering both gravity-sensitive vertical contexts.
+        for (const [y0, y1] of spans)
+            t.push([idx(0, y0), idx(4, y0), idx(0, y1), idx(4, y1)]);
+        t.push(
+            [idx(0, 0), idx(3, 0), idx(0, 4), idx(3, 4)],
+            [idx(1, 0), idx(4, 0), idx(1, 4), idx(4, 4)]
+        );
+        t.push(
+            [idx(0, 0), idx(1, 1), idx(2, 2), idx(3, 3), idx(4, 4)],
+            [idx(4, 0), idx(3, 1), idx(2, 2), idx(1, 3), idx(0, 4)],
+            [idx(0, 0), idx(1, 1), idx(2, 2), idx(3, 3)],
+            [idx(4, 0), idx(3, 1), idx(2, 2), idx(1, 3)]
+        );
+        return t;
+    }
+
+    // Two pure-global tables plus four mirror-paired local/global tables. The
+    // latter let the same corner or edge pattern mean something different in
+    // an open board, a sealed endgame, or a fragmented human position without
+    // replicating every local tuple into another global bank.
+    function globalTuples() {
+        const G = GLOBAL;
+        return [
+            [G.SIXES, G.FIVE_GROUPS, G.EQUAL_EDGES, G.EXPOSED_SIXES],
+            [G.PLAYABLE_CELLS, G.SINGLETONS, G.HOLES, G.HIGH_TILES],
+            [idx(0, 0), idx(0, 1), G.SIXES, G.EQUAL_EDGES],
+            [idx(4, 0), idx(4, 1), G.SIXES, G.EQUAL_EDGES],
+            [idx(2, 0), idx(2, 1), G.SIXES, G.EQUAL_EDGES],
+            [idx(0, 4), idx(0, 3), G.SIXES, G.EXPOSED_SIXES],
+            [idx(4, 4), idx(4, 3), G.SIXES, G.EXPOSED_SIXES],
+            [idx(2, 4), idx(2, 3), G.SIXES, G.EXPOSED_SIXES],
+            [idx(0, 0), idx(1, 0), G.FIVE_GROUPS, G.PLAYABLE_CELLS],
+            [idx(4, 0), idx(3, 0), G.FIVE_GROUPS, G.PLAYABLE_CELLS]
+        ];
+    }
+
     const SETS = {
         base: () => squares().concat(runs(4)),                                   // 36 tuples,   86 436 w
         rows: () => squares().concat(runs(4), runs(5)),                          // 46 tuples,  254 506 w
@@ -124,7 +197,14 @@
         // `doms` without the 2x3/3x2 blocks: they are 86% of the weight table and
         // 33% of the reads, so whether they still earn that once the dominoes
         // are present is worth its own measurement.
-        domsx: () => squares().concat(runs(4), runs(5), crosses(), runs(2))
+        domsx: () => squares().concat(runs(4), runs(5), crosses(), runs(2)),
+
+        // First next-network experiment. Every arm has `doms` as an exact
+        // leading prefix, so grow.js starts them as precisely the same function
+        // and training can initially freeze that prefix (ptrain.js).
+        domsfar: () => SETS.doms().concat(farTuples()),
+        domsglobal: () => SETS.doms().concat(globalTuples()),
+        domshybrid: () => SETS.doms().concat(farTuples(), globalTuples())
     };
 
     // With `sym` on, the mirror of a tuple is another tuple in these sets, and
@@ -175,7 +255,25 @@
         SETS[name + 'c'] = () => subsetCompact(build());
     }
 
-    const mirrorCell = k => (W - 1 - ((k / H) | 0)) * H + (k % H);
+    // Runnable directly from the checked-in dom39h.bins, whose deployed tuple
+    // set is `domsrc`. These keep that already reduced/compacted set as their
+    // leading prefix, append trainable experiment tables, and define the two
+    // normal post-training transforms explicitly.
+    const deployedArms = {
+        domsrcfar: () => SETS.domsrc().concat(farTuples()),
+        domsrcglobal: () => SETS.domsrc().concat(globalTuples()),
+        domsrchybrid: () => SETS.domsrc().concat(farTuples(), globalTuples())
+    };
+    for (const [name, build] of Object.entries(deployedArms)) {
+        SETS[name] = build;
+        SETS[name + 'r'] = () => mirrorReduce(build());
+        SETS[name + 'rc'] = () => subsetCompact(mirrorReduce(build()));
+    }
+
+    // Global features are mirror-invariant. A tuple may therefore contain a
+    // mixture of physical and virtual cells and still use the existing mirror
+    // reader and reduction machinery unchanged.
+    const mirrorCell = k => k >= BOARD_CELLS ? k : (W - 1 - ((k / H) | 0)) * H + (k % H);
 
     // Pack a tuple list into flat arrays: `cells` holds every tuple's indices
     // back to back, off[t]/len[t] index into it, wbase[t] is where tuple t's
@@ -203,7 +301,9 @@
             selfMir[t] = own === mir ? 1 : 0;
             total += Math.pow(V, tuples[t].length);
         }
-        return { n, off, len, wbase, cells, mcells, selfMir, size: total };
+        let hasGlobal = false;
+        for (let k = 0; k < cells.length; k++) if (cells[k] >= BOARD_CELLS) { hasGlobal = true; break; }
+        return { n, off, len, wbase, cells, mcells, selfMir, hasGlobal, size: total };
     }
 
     // Stands in for selfMir when the optimisation is off, so the hot loop keeps
@@ -276,6 +376,13 @@
             let sc = 0;
             if (this.selfOnce) for (let k = 0; k < this.t.n; k++) sc += this.t.selfMir[k];
             this.selfCount = sc;
+            this.selfPrefix = new Int16Array(this.t.n + 1);
+            for (let k = 0; k < this.t.n; k++) this.selfPrefix[k + 1] = this.selfPrefix[k] + this.self[k];
+
+            // Reused scratch for global feature extraction. No allocation is
+            // performed in value(), including under a many-node phone search.
+            this.featureInput = this.t.hasGlobal ? new Uint8Array(INPUT_CELLS) : null;
+            this.featureStage = 0;
         }
 
         get meta() {
@@ -350,10 +457,67 @@
             return this.bankFor(sixes, n - adj + sq);
         }
 
+        // Materialise virtual cells for tuple sets that use them. This is a
+        // single allocation-free board pass. The 5-component count uses the
+        // same Euler approximation as stageOf(); broader connectivity is given
+        // by equal adjacencies, playable-cell count and singleton count. These
+        // are cheaper than five separate component fills at every search leaf.
+        prepare(cells) {
+            if (!this.featureInput) return cells;
+            const out = this.featureInput;
+            let holes = 0, sixes = 0, high = 0, exposed = 0;
+            let singletons = 0, playable = 0, equalEdges = 0, fiveN = 0, fiveAdj = 0, fiveSq = 0;
+            for (let i = 0; i < W; i++) for (let j = 0; j < H; j++) {
+                const k = i * H + j, v = cells[k]; out[k] = v;
+                if (v === 0) { holes++; continue; }
+                const left = i > 0 && cells[k - H] === v;
+                const right = i + 1 < W && cells[k + H] === v;
+                const down = j > 0 && cells[k - 1] === v;
+                const up = j + 1 < H && cells[k + 1] === v;
+                if (v === 6) {
+                    sixes++;
+                    if (!(left && right && down && up) &&
+                        ((i > 0 && cells[k - H] !== 6) || (i + 1 < W && cells[k + H] !== 6) ||
+                         (j > 0 && cells[k - 1] !== 6) || (j + 1 < H && cells[k + 1] !== 6))) exposed++;
+                    continue;
+                }
+                if (v >= 4) high++;
+                if (up) equalEdges++;
+                if (right) equalEdges++;
+                if (v === 5) {
+                    fiveN++;
+                    if (up) fiveAdj++;
+                    if (right) fiveAdj++;
+                    if (up && right && cells[k + H + 1] === 5) fiveSq++;
+                }
+                if (left || right || down || up) playable++; else singletons++;
+            }
+
+            const fiveGroups = fiveN - fiveAdj + fiveSq;
+            this.featureStage = this.bankFor(sixes, fiveGroups);
+
+            out[GLOBAL.SIXES] = Math.min(6, (sixes / 2) | 0);
+            out[GLOBAL.FIVE_GROUPS] = Math.max(0, Math.min(6, fiveGroups));
+            out[GLOBAL.EQUAL_EDGES] = Math.min(6, (equalEdges / 3) | 0);
+            out[GLOBAL.PLAYABLE_CELLS] = Math.min(6, (playable / 3) | 0);
+            out[GLOBAL.EXPOSED_SIXES] = Math.min(6, exposed);
+            out[GLOBAL.SINGLETONS] = Math.min(6, (singletons / 2) | 0);
+            out[GLOBAL.HOLES] = Math.min(6, holes);
+            out[GLOBAL.HIGH_TILES] = Math.min(6, (high / 2) | 0);
+            return out;
+        }
+
+        // prepare() already computed the two banking features. Reuse them for
+        // global architectures instead of immediately scanning the board again.
+        preparedStage(cells) {
+            return this.featureInput ? this.featureStage : this.stageOf(cells);
+        }
+
         value(cells) {
             const t = this.t, w = this.w, sym = this.sym, self = this.self;
             if (this.q16) return this.valueQ(cells);
-            const bank = this.stages > 1 ? this.stageOf(cells) * this.bank : 0;
+            cells = this.prepare(cells);
+            const bank = this.stages > 1 ? this.preparedStage(cells) * this.bank : 0;
             let sum = 0;
             for (let k = 0; k < t.n; k++) {
                 const o = t.off[k], l = t.len[k], b = bank + t.wbase[k];
@@ -374,7 +538,8 @@
         // would sit in the hottest loop in the program.
         valueQ(cells) {
             const t = this.t, w = this.w, self = this.self, sc = this.scale;
-            const st = this.stages > 1 ? this.stageOf(cells) : 0;
+            cells = this.prepare(cells);
+            const st = this.stages > 1 ? this.preparedStage(cells) : 0;
             const bank = st * this.bank, sb = st * t.n;
             let sum = 0;
             for (let k = 0; k < t.n; k++) {
@@ -395,14 +560,18 @@
         // self-mirrored tuple contributes one term rather than two, so it takes
         // one share rather than two -- otherwise its weights would move at twice
         // the rate of everything else.
-        update(cells, delta) {
+        update(cells, delta, fromTuple) {
             const t = this.t, w = this.w, sym = this.sym, self = this.self;
             // Training an int16 table would quantise every increment to the
             // step size and stall; quantisation is the last step before play.
             if (this.q16) throw new Error('cannot train a quantised network');
-            const bank = this.stages > 1 ? this.stageOf(cells) * this.bank : 0;
-            const d = delta / (sym ? 2 * t.n - this.selfCount : t.n);
-            for (let k = 0; k < t.n; k++) {
+            cells = this.prepare(cells);
+            const bank = this.stages > 1 ? this.preparedStage(cells) * this.bank : 0;
+            const first = fromTuple || 0;
+            if (first < 0 || first >= t.n) throw new Error('fromTuple must leave at least one trainable tuple');
+            const selfAfter = this.selfPrefix[t.n] - this.selfPrefix[first];
+            const d = delta / (sym ? 2 * (t.n - first) - selfAfter : t.n - first);
+            for (let k = first; k < t.n; k++) {
                 const o = t.off[k], l = t.len[k], b = bank + t.wbase[k];
                 let a = 0, m = 0;
                 for (let c = 0; c < l; c++) {
@@ -430,7 +599,8 @@
         }
         update(cells, delta) {
             const net = this.net, t = net.t, w = net.w, sym = net.sym, E = this.E, A = this.A;
-            const bank = net.stages > 1 ? net.stageOf(cells) * net.bank : 0;
+            cells = net.prepare(cells);
+            const bank = net.stages > 1 ? net.preparedStage(cells) * net.bank : 0;
             const d = delta / (sym ? 2 * t.n : t.n);
             const ad = Math.abs(d);
             for (let k = 0; k < t.n; k++) {
@@ -532,7 +702,8 @@
             const t = this.t, self = this.self;
             const sBase = this.scaleBase, sCorr = this.scaleCorr;
             const idx = this.idx, rec = this.rec, vals = this.vals, v8 = this.vals8, rest = this.rest;
-            const st = this.stages > 1 ? this.stageOf(cells) : 0;
+            cells = this.prepare(cells);
+            const st = this.stages > 1 ? this.preparedStage(cells) : 0;
             const sb = st * t.n;
             const hi = st >= 32, sbit = 1 << (hi ? st - 32 : st), below = sbit - 1;
             let sum = 0;
@@ -823,5 +994,8 @@
     const NT = tupleSet('base').n;
     const SIZE = 2401;
 
-    return { Network, SparseNetwork, TC, tupleSet, SETS, save, load, encode, decode, toSparse, NT, SIZE, W, H, V };
+    return {
+        Network, SparseNetwork, TC, tupleSet, SETS, save, load, encode, decode, toSparse,
+        NT, SIZE, W, H, V, BOARD_CELLS, GLOBAL, GLOBAL_NAMES
+    };
 });

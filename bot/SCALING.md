@@ -1,5 +1,10 @@
 # Scaling search with time
 
+> The next evaluator experiment prompted by the ceiling documented here is in
+> [NEXT_NETWORK.md](NEXT_NETWORK.md). It tests exact-grown far-field and global
+> correction tuples, mined human-game blindspots, synthetic OOD support, and a
+> frozen-prefix training phase before changing the already-strong evaluator.
+
 A running record of the work on **how to spend more than a millisecond a move**.
 Newest findings at the top of each section. The goals it is aimed at:
 

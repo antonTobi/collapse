@@ -121,7 +121,8 @@ function main() {
     // file's own header. The whole claim is that this equals the reduced net.
     const st = src.t;
     function sourceValue(cells) {
-        const bank = src.stages > 1 ? src.stageOf(cells) * src.bank : 0;
+        cells = src.prepare(cells);
+        const bank = src.stages > 1 ? src.preparedStage(cells) * src.bank : 0;
         let sum = 0;
         for (let k = 0; k < st.n; k++) {
             const o = st.off[k], l = st.len[k], b = bank + st.wbase[k];
