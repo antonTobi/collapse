@@ -60,6 +60,27 @@
     #reviewButton.on {
       visibility: visible;
     }
+
+    .cornerLink {
+      position: fixed;
+      top: 12px;
+      color: #999;
+      font-size: 13px;
+      z-index: 1;
+    }
+
+    .cornerLink a {
+      color: #999;
+      text-decoration: underline;
+    }
+
+    #madeByLink {
+      left: 12px;
+    }
+
+    #puzzleLink {
+      right: 12px;
+    }
   </style>
 
   <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js" defer></script>
@@ -76,6 +97,8 @@
 </head>
 
 <body>
+  <div id="madeByLink" class="cornerLink">Made by <a href="https://antontobi.com">antonTobi</a></div>
+  <div id="puzzleLink" class="cornerLink">Try the new <a href="puzzle.html">puzzle mode</a>!</div>
   <div id="game">
     <div id="board"></div>
     <div id="reviewSlot">
