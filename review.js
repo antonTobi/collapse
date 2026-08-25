@@ -1,12 +1,12 @@
-// Review a finished main-game replay. The position scan follows the proven
-// spectator configuration: dom39h, a cheap full scan, then careful scoring of
-// only the likely mistakes. Values stay internal; this UI shows the moves.
+// Review a finished main-game replay. The whole game is evaluated up front with
+// the dom39h net at depth 2 and drawn as an evaluation graph; the sharp downward
+// turns in that curve are picked out as "key moments" (see findKeyMoments).
 //
 // The board is drawn to a <canvas> with the main game's falling-tile physics
 // (config.js gravity/bounceFactor, and the dt = frame time / 18 clamp from
 // game.js). Two timelines share a single `frames` array and `index`:
 //
-//   * replay mode — the recorded game, scored for mistakes. It is the only
+//   * replay mode — the recorded game. It is the only
 //     timeline stored in the forward direction, so stepping ahead walks the
 //     recorded moves. Clicking the recorded move stays on it; any other legal
 //     click branches off it.
@@ -23,12 +23,40 @@
 // recorded game line.
 (function () {
     const REVIEW_WEIGHTS = 'bot/weights/dom39h.bins'
-    const SCAN_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=2,topk=0,rootk=0,crn=1'
-    const FINE_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=64,topk=0,rootk=0,crn=1'
-    const SHORTLIST = 40
-    const MISTAKE_MIN = 200
+    // Evaluation graph: the bot's depth-2 estimate of the final score reachable
+    // from a position. rootk keeps it cheap -- only the best move's value is read,
+    // and that move is among the few the root search keeps at full depth.
+    const GRAPH_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=16,topk=2,rootk=6,crn=1'
+    const COL_DEPTH2 = '#e67e22'
+    const COL_KEY = '#c0392b'
+    // Key-moment detection: the onset of a sustained downward turn in the eval.
+    // The curve is smoothed over +-SMOOTH_R moves, then its discrete second
+    // derivative over +-CURV_WIN (S[n+w] - 2S[n] + S[n-w]) picks out sharp
+    // downward *knees* -- concave-down points, more negative the sharper the
+    // turn. A knee counts only if it clears CURV_MIN and is followed by a real
+    // fall of DROP_MIN within DROP_WIN moves (so a rise-into-plateau does not
+    // register); near-duplicates within KEY_GAP are suppressed, and only the
+    // KEY_CAP strongest (by curvature) are kept. Tuned across a range of human
+    // games (see bot/keymoments.js).
+    const SMOOTH_R = 2
+    const CURV_WIN = 6
+    const CURV_MIN = 300
+    const DROP_MIN = 500
+    const DROP_WIN = 25
+    const KEY_GAP = 12
+    const ONSET_CAP = 10                 // knees kept before refinement
+    const KEY_CAP = 5                    // key moments shown after refinement
+    // Refinement of each onset (see refineKeyMoments): snap forward to the first
+    // move within DISAGREE_WIN where the bot disagrees with the human (if it
+    // agrees the whole window, the drop was bad luck, not a mistake); then play
+    // DD_PLIES bot moves from there and drop the moment if the bot's own line
+    // also falls DD_DROP below its start (the position was lost regardless).
+    const DISAGREE_WIN = 3
+    const DD_PLIES = 10
+    const DD_DROP = 400
     const FF_DELAY = 300                 // ms between fast-forward steps
     const SUGGESTION_KEY = 'collapse-review-show-suggestion'
+    const GRAPH_KEY = 'collapse-review-show-graph'
 
     // Inline Lucide icon bodies (24x24, stroke on currentColor) so the controls
     // are real icons rather than font-dependent glyphs, with no network fetch.
@@ -41,7 +69,10 @@
         pause: '<rect x="14" y="3" width="5" height="18" rx="1"/><rect x="5" y="3" width="5" height="18" rx="1"/>',
         fastForward: '<polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/>',
         arrowLeft: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
-        x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
+        x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+        link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+            '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+        check: '<path d="M20 6 9 17l-5-5"/>'
     }
     const icon = name => '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
         'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>'
@@ -59,14 +90,19 @@
     let replayFrames = []                // the recorded human game (built once)
     let frames = []                      // active timeline: replayFrames or variationFrames
     let index = 0
-    let mistakes = []
     let branchName = 'You'
     let network = null
-    let fineAgent = null                 // FINE_SPEC agent, shared by review + variation play
+    let graphAgent = null                // GRAPH_SPEC agent: eval + bot move, one per position
+    let evalSeries = []                  // { g, d2 } per replay frame, computed up front
+    let graphZoom = 1                    // x zoom: 1 = whole game
+    let graphView = null                 // geometry from the last draw, for hit-testing
+    let keyMoments = []                  // [{ n, drop }] onsets of sustained eval declines
 
     // Board rendering state.
     const canvas = el('board')
     const ctx = canvas.getContext('2d')
+    const graphCanvas = el('graph')
+    const gctx = graphCanvas.getContext('2d')
     let animBoard = null                 // columns of { n, y, vy } currently on screen
     let animating = false
     let animDone = null                  // called once the fall settles
@@ -86,14 +122,19 @@
     let mode = 'replay'                  // 'replay' | 'variation'
     let variationFrames = null           // the branching line, or null on the main path
     let branchIndex = 0                  // replay frame the current variation left from
-    let showSuggestion = true            // "Show bot suggestion" checkbox
+    let showSuggestion = true            // "Move suggestions" checkbox
+    let showGraph = true                 // "Eval graph" checkbox
 
-    // The game to review is passed entirely in the URL: displayName, seed and
-    // the move list as separate parameters, so a game can be linked to directly.
+    // The game to review is passed entirely in the URL: displayName, seed, the
+    // move list, and an optional `at` move number to open on.
     function readGame() {
         const p = new URLSearchParams(window.location.search)
         if (!p.has('seed')) return null
-        return { seed: Number(p.get('seed')), moves: p.get('moves') || '', displayName: p.get('displayName') || 'You' }
+        return {
+            seed: Number(p.get('seed')), moves: p.get('moves') || '',
+            displayName: p.get('displayName') || 'You',
+            at: p.has('at') ? Number(p.get('at')) : null
+        }
     }
 
     function capture(game, move) {
@@ -161,18 +202,269 @@
         return [i, row]
     }
 
-    function scoreFrame(frame, agent, fine) {
-        if (!frame.move) return null
-        const game = fromCells(frame.cells, 1)
-        const scored = agent.scoreMoves(game)
-        if (scored.length < 2) return null
-        const played = canonicalMove(frame.cells, frame.move)
-        let best = null, bestValue = -Infinity, playedValue = null
-        for (const { move, value } of scored) {
-            if (value > bestValue) { bestValue = value; best = move }
-            if (move[0] === played[0] && move[1] === played[1]) playedValue = value
+    // --- evaluation graph ---------------------------------------------------
+
+    // The bot's depth-2 estimate of the final score reachable from a position
+    // (banked score plus the value of its best move), AND the move it would play.
+    // Computed together from one search so the eval, the dashed suggestion, and
+    // the move played into a variation can never disagree. Deterministic argmax.
+    function evalOf(cells, score) {
+        const g = fromCells(cells, 1)
+        if (g.gameOver) return { d2: score, move: null }
+        const scored = graphAgent.scoreMoves(g)
+        if (!scored.length) return { d2: score, move: null }
+        let bv = -Infinity, bm = null
+        for (const s of scored) if (s.value > bv) { bv = s.value; bm = s.move }
+        return { d2: score + bv, move: bm }
+    }
+
+    // Both eval lines for the whole recorded game, up front. Yields so the page
+    // stays responsive on a long replay.
+    async function computeEvalSeries() {
+        evalSeries = new Array(replayFrames.length)
+        setLoadingMessage('Computing evaluation graph…')
+        let slice = performance.now()
+        for (let n = 0; n < replayFrames.length; n++) {
+            const f = replayFrames[n]
+            f.evalPt = evalOf(f.cells, f.score)
+            evalSeries[n] = f.evalPt
+            if (performance.now() - slice > 120) {
+                drawGraph()
+                await new Promise(resolve => setTimeout(resolve, 0))
+                slice = performance.now()
+            }
         }
-        return playedValue === null ? null : { best, loss: bestValue - playedValue, fine }
+        clearLoadingMessage()
+        keyMoments = refineKeyMoments(findKeyMoments(evalSeries.map(p => p.d2)))
+        updateGraphVisibility()          // reveal the graph (or keep the slider)
+    }
+
+    // Centred moving average, to average out the per-move noise before looking
+    // for trends.
+    function smoothSeries(vals, radius) {
+        const out = new Array(vals.length)
+        for (let i = 0; i < vals.length; i++) {
+            let s = 0, c = 0
+            for (let k = Math.max(0, i - radius); k <= Math.min(vals.length - 1, i + radius); k++) { s += vals[k]; c++ }
+            out[i] = s / c
+        }
+        return out
+    }
+
+    // The onset of every sharp downward turn. On the smoothed curve S, the
+    // discrete second derivative d2[n] = S[n+w] - 2 S[n] + S[n-w] is most negative
+    // at the sharpest concave-down knees -- which is where a steep slide begins,
+    // as opposed to a gently rounded top. A knee is kept when it clears CURV_MIN,
+    // is a local minimum of d2 (the sharpest point of its turn), and is followed
+    // by a genuine fall of DROP_MIN within DROP_WIN moves (so the top of a rise
+    // into a plateau, which is also concave-down, does not count). The reported
+    // move is snapped to the raw local peak at the lip of the drop, and knees
+    // closer than KEY_GAP are collapsed to the sharpest one.
+    function findKeyMoments(series) {
+        const N = series.length
+        if (N < 2 * CURV_WIN + 1) return []
+        const S = smoothSeries(series, SMOOTH_R)
+        const d2 = new Array(N).fill(0)
+        for (let n = CURV_WIN; n < N - CURV_WIN; n++) d2[n] = S[n + CURV_WIN] - 2 * S[n] + S[n - CURV_WIN]
+
+        const hits = []
+        for (let n = CURV_WIN; n < N - CURV_WIN; n++) {
+            if (d2[n] >= -CURV_MIN) continue
+            let localMin = true
+            for (let o = n - 2; o <= n + 2; o++) if (o >= 0 && o < N && d2[o] < d2[n]) localMin = false
+            if (!localMin) continue
+            let mn = S[n]
+            for (let m = n; m <= Math.min(N - 1, n + DROP_WIN); m++) if (S[m] < mn) mn = S[m]
+            const drop = S[n] - mn
+            if (drop < DROP_MIN) continue
+            // Snap to the raw local peak at the lip of the drop.
+            let bn = n, bv = series[n]
+            for (let m = Math.max(0, n - 1); m <= Math.min(N - 1, n + CURV_WIN); m++) if (series[m] > bv) { bv = series[m]; bn = m }
+            hits.push({ n: bn, d2: d2[n], drop })
+        }
+        // Rank by the size of the fall (the eval actually lost, the most
+        // interpretable "how big a mistake"); suppress near-duplicates within
+        // KEY_GAP, keep the ONSET_CAP biggest for the refinement stage.
+        hits.sort((a, b) => b.drop - a.drop)
+        const kept = []
+        for (const h of hits) if (kept.every(x => Math.abs(x.n - h.n) >= KEY_GAP)) kept.push(h)
+        return kept.slice(0, ONSET_CAP)
+    }
+
+    // The bot's move and the human's move at replay position n (both canonical).
+    function botMoveAt(n) { return evalSeries[n] ? evalSeries[n].move : null }
+    function humanMoveAt(n) {
+        const f = replayFrames[n]
+        return f && f.move ? canonicalMove(f.cells, f.move) : null
+    }
+    const sameMove = (a, b) => !!a && !!b && a[0] === b[0] && a[1] === b[1]
+
+    // Snap an onset forward to the first move within DISAGREE_WIN where the bot
+    // disagrees with the human; null if the bot agreed the whole window (the drop
+    // was bad luck, not a decision the player got wrong).
+    function firstDisagreement(n) {
+        const end = Math.min(n + DISAGREE_WIN - 1, replayFrames.length - 1)
+        for (let t = n; t <= end; t++) if (botMoveAt(t) && humanMoveAt(t) && !sameMove(botMoveAt(t), humanMoveAt(t))) return t
+        return null
+    }
+
+    // How far the bot's OWN line falls below its starting eval over DD_PLIES
+    // moves played from position m with the game's rng. A large fall means the
+    // position was already lost, so the human's move there is not the mistake.
+    function botLineDrawdown(m) {
+        if (!evalSeries[m]) return 0
+        const start = evalSeries[m].d2
+        const game = gameFor(replayFrames[m])
+        let worst = start
+        for (let k = 0; k < DD_PLIES && !game.gameOver; k++) {
+            const ev = evalOf(game.cells, game.score)
+            if (ev.d2 < worst) worst = ev.d2
+            if (!ev.move) break
+            game.apply(ev.move[0], ev.move[1])
+        }
+        return start - worst
+    }
+
+    // Turn the raw onsets into shown key moments: disagreement snap, bad-luck and
+    // lost-anyway filters, then the KEY_CAP biggest falls in move order.
+    function refineKeyMoments(onsets) {
+        const out = []
+        for (const on of onsets) {
+            const m = firstDisagreement(on.n)
+            if (m === null) continue
+            if (botLineDrawdown(m) >= DD_DROP) continue
+            out.push({ n: m, drop: on.drop })
+        }
+        out.sort((a, b) => b.drop - a.drop)
+        const kept = []
+        for (const h of out) if (kept.every(x => Math.abs(x.n - h.n) >= KEY_GAP)) kept.push(h)
+        const capped = kept.slice(0, KEY_CAP)
+        capped.sort((a, b) => a.n - b.n)
+        return capped
+    }
+
+    // Lazily fill in a variation frame's eval (variations grow one move at a
+    // time, so this is cheap per call).
+    function evalForFrame(frame) {
+        if (!frame.evalPt) frame.evalPt = evalOf(frame.cells, frame.score)
+        return frame.evalPt
+    }
+
+    // Match the graph backing store to its displayed size and the device pixel
+    // ratio. Called on every draw so it also picks up visibility and resize.
+    function sizeGraph() {
+        const dpr = window.devicePixelRatio || 1
+        const cssW = graphCanvas.clientWidth || 400
+        const cssH = cssW * 150 / 400
+        const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr)
+        if (graphCanvas.width !== w || graphCanvas.height !== h) { graphCanvas.width = w; graphCanvas.height = h }
+        gctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+
+    const MINWIN = 8                     // narrowest x window (moves) at max zoom
+
+    // Plot the eval lines. The x range is a zoom window centred on the current
+    // position (so scrubbing pans); the y range fits the values actually visible,
+    // rounded out to whole thousands with a gridline at each. In a variation the
+    // recorded lines fade and the variation's own lines are drawn bold from the
+    // branch point, so the "what if" is read against the actual game it left.
+    function drawGraph() {
+        if (!evalSeries.length) return
+        sizeGraph()
+        const dpr = window.devicePixelRatio || 1
+        const Wg = graphCanvas.width / dpr, Hg = graphCanvas.height / dpr
+        const padL = 32, padR = 6, padT = 6, padB = 4
+        const plotW = Wg - padL - padR, plotH = Hg - padT - padB
+        const inVar = mode === 'variation' && variationFrames
+
+        const lastReplay = replayFrames.length - 1
+        const varEnd = inVar ? branchIndex + variationFrames.length - 1 : 0
+        const axisMax = Math.max(lastReplay, varEnd, 1)
+        const curX = inVar ? branchIndex + index : index
+
+        // X zoom window, centred on the current position and clamped to the game.
+        const windowW = Math.max(Math.min(MINWIN, axisMax), Math.min(axisMax, axisMax / graphZoom))
+        let xStart = curX - windowW / 2
+        if (xStart < 0) xStart = 0
+        if (xStart + windowW > axisMax) xStart = axisMax - windowW
+        const xEnd = xStart + windowW
+        const i0 = Math.max(0, Math.floor(xStart)), i1 = Math.ceil(xEnd)
+
+        // Y range: fit the visible depth-2 points, to whole 1000s.
+        let lo = Infinity, hi = -Infinity
+        const consider = p => {
+            if (!p) return
+            if (p.d2 < lo) lo = p.d2; if (p.d2 > hi) hi = p.d2
+        }
+        for (let i = i0; i <= i1 && i <= lastReplay; i++) consider(evalSeries[i])
+        if (inVar) for (let i = 0; i < variationFrames.length; i++) {
+            const g = branchIndex + i
+            if (g >= i0 && g <= i1) consider(evalForFrame(variationFrames[i]))
+        }
+        if (!isFinite(lo)) { lo = 0; hi = 1000 }
+        let yMin = Math.floor(lo / 1000) * 1000, yMax = Math.ceil(hi / 1000) * 1000
+        if (yMax - yMin < 1000) yMax = yMin + 1000
+        const xFor = g => padL + ((g - xStart) / windowW) * plotW
+        const yFor = v => padT + (1 - (v - yMin) / (yMax - yMin)) * plotH
+        // Geometry for hit-testing (scrub + snap-to-key-moment).
+        graphView = { padL, plotW, xStart, windowW, axisMax, padT, plotH, yMin, yMax }
+
+        gctx.clearRect(0, 0, Wg, Hg)
+
+        // Gridlines + labels every 1000 points.
+        gctx.font = '10px Roboto, sans-serif'
+        gctx.textAlign = 'right'; gctx.textBaseline = 'middle'
+        for (let g = yMin; g <= yMax; g += 1000) {
+            const y = yFor(g)
+            gctx.strokeStyle = '#e0e0e0'; gctx.lineWidth = 1
+            gctx.beginPath(); gctx.moveTo(padL, y); gctx.lineTo(Wg - padR, y); gctx.stroke()
+            gctx.fillStyle = '#999'; gctx.fillText(String(g), padL - 4, y)
+        }
+
+        // Clip to the plot area so panned lines do not spill over the labels.
+        gctx.save()
+        gctx.beginPath(); gctx.rect(padL, 0, plotW, Hg); gctx.clip()
+
+        const drawLine = (getV, count, xOff, color, width, alpha) => {
+            gctx.strokeStyle = color; gctx.lineWidth = width; gctx.globalAlpha = alpha
+            gctx.beginPath()
+            let started = false
+            for (let i = 0; i < count; i++) {
+                const v = getV(i); if (v == null) continue
+                const x = xFor(xOff + i), y = yFor(v)
+                if (started) gctx.lineTo(x, y); else { gctx.moveTo(x, y); started = true }
+            }
+            gctx.stroke(); gctx.globalAlpha = 1
+        }
+
+        const actAlpha = inVar ? 0.28 : 1
+        const aFrom = Math.max(0, i0 - 1), aTo = Math.min(evalSeries.length, i1 + 2)
+        drawLine(i => evalSeries[aFrom + i] && evalSeries[aFrom + i].d2, aTo - aFrom, aFrom, COL_DEPTH2, 1.5, actAlpha)
+
+        // Key moments: a dot on the curve where each sustained decline begins.
+        if (!inVar) for (const km of keyMoments) {
+            if (km.n < i0 || km.n > i1 || !evalSeries[km.n]) continue
+            gctx.fillStyle = COL_KEY
+            gctx.beginPath(); gctx.arc(xFor(km.n), yFor(evalSeries[km.n].d2), 3.5, 0, 2 * Math.PI); gctx.fill()
+        }
+
+        if (inVar) {
+            drawLine(i => evalForFrame(variationFrames[i]).d2, variationFrames.length, branchIndex, COL_DEPTH2, 2, 1)
+            gctx.strokeStyle = '#111'; gctx.lineWidth = 1; gctx.globalAlpha = 0.35
+            gctx.beginPath(); gctx.moveTo(xFor(branchIndex), padT); gctx.lineTo(xFor(branchIndex), Hg - padB); gctx.stroke()
+            gctx.globalAlpha = 1
+        }
+
+        // Current-position marker (light) plus a dot where it meets the curve.
+        gctx.strokeStyle = '#bbb'; gctx.lineWidth = 1
+        gctx.beginPath(); gctx.moveTo(xFor(curX), padT); gctx.lineTo(xFor(curX), Hg - padB); gctx.stroke()
+        const curPt = frames[index] ? evalForFrame(frames[index]) : null
+        if (curPt) {
+            gctx.fillStyle = COL_DEPTH2
+            gctx.beginPath(); gctx.arc(xFor(curX), yFor(curPt.d2), 4, 0, 2 * Math.PI); gctx.fill()
+            gctx.strokeStyle = '#fff'; gctx.lineWidth = 1.5; gctx.stroke()
+        }
+        gctx.restore()
     }
 
     // --- loading status -----------------------------------------------------
@@ -253,7 +545,7 @@
         const reader = response.body.getReader()
         const chunks = []
         let received = 0
-        for (;;) {
+        for (; ;) {
             const { done, value } = await reader.read()
             if (done) break
             chunks.push(value)
@@ -284,7 +576,7 @@
                     revealSuggestion()
                     return network
                 } catch (_) {
-                    try { await idbDelete(REVIEW_WEIGHTS) } catch (_) {}   // drop a corrupt entry
+                    try { await idbDelete(REVIEW_WEIGHTS) } catch (_) { }   // drop a corrupt entry
                 }
             }
         } catch (_) { /* cache unavailable; fetch below */ }
@@ -296,74 +588,32 @@
                 : 'Loading review bot… ' + Math.round(fraction * 100) + '%')
         })
         network = window.CollapseNTuple.decode(buffer)
-        try { await idbPut(REVIEW_WEIGHTS, buffer) } catch (_) {}
+        try { await idbPut(REVIEW_WEIGHTS, buffer) } catch (_) { }
         clearLoadingMessage()
         revealSuggestion()
         return network
     }
 
-    async function ensureFineAgent() {
-        if (fineAgent) return fineAgent
-        try {
-            fineAgent = createAgent(FINE_SPEC, { seed: 1, network: await loadReviewNetwork() })
-        } catch (error) {
-            setLoadingMessage('Could not load the review bot (' + error.message + ').')
-            return null
-        }
-        return fineAgent
-    }
-
     async function review() {
-        let scan, fine
         try {
             const weights = await loadReviewNetwork()
-            scan = createAgent(SCAN_SPEC, { seed: 1, network: weights })
-            fine = createAgent(FINE_SPEC, { seed: 1, network: weights })
-            fineAgent = fine             // reused for variation suggestions/play
+            graphAgent = createAgent(GRAPH_SPEC, { seed: 1, network: weights })
         } catch (error) {
             setLoadingMessage('Could not load the review bot (' + error.message + ').')
             return
         }
-
-        let sliceStart = performance.now()
-        for (let n = 0; n < replayFrames.length; n++) {
-            replayFrames[n].review = scoreFrame(replayFrames[n], scan, false)
-            if (performance.now() - sliceStart > 150) {
-                await new Promise(resolve => setTimeout(resolve, 0))
-                sliceStart = performance.now()
-            }
-        }
-
-        const ranked = replayFrames.map((frame, n) => ({ frame, n }))
-            .filter(({ frame }) => frame.review && frame.review.loss > .5)
-            .sort((a, b) => b.frame.review.loss - a.frame.review.loss)
-        await new Promise(resolve => setTimeout(resolve, 0))
-        for (const { frame } of ranked.slice(0, SHORTLIST)) frame.review = scoreFrame(frame, fine, true)
-        ranked.sort((a, b) => b.frame.review.loss - a.frame.review.loss)
-        // The five biggest by loss, but presented in move order so they read as a
-        // path through the game rather than a ranking.
-        mistakes = ranked.filter(({ frame }) => frame.review.loss >= MISTAKE_MIN).slice(0, 5).map(({ n }) => n).sort((a, b) => a - b)
-        renderMistakes()
+        await computeEvalSeries()          // eval graph + key moments
         if (playState === 'paused' && !animating) renderFrame()
     }
 
-    // A row of jump buttons, one per mistake, in move order. Replay only.
-    function renderMistakes() {
-        const box = el('mistakes')
-        box.innerHTML = ''
-        if (mode !== 'replay' || !mistakes.length) { box.classList.remove('on'); return }
-        box.classList.add('on')
-        const label = document.createElement('span')
-        label.className = 'mlabel'
-        label.textContent = 'Mistakes:'
-        box.appendChild(label)
-        for (const n of mistakes) {
-            const b = document.createElement('button')
-            b.className = 'mbtn'
-            b.textContent = 'Move ' + n
-            b.onclick = () => snap(n)
-            box.appendChild(b)
-        }
+    // Show the graph when it is enabled and ready; otherwise fall back to the
+    // move slider. The two are redundant, so only one is visible at a time.
+    function updateGraphVisibility() {
+        const graphShown = showGraph && evalSeries.length > 0
+        el('graphWrap').classList.toggle('on', graphShown)
+        el('timeline').hidden = graphShown || mode === 'variation'
+        if (graphShown) drawGraph()
+        if (frames[index]) updateLabels(frames[index])
     }
 
     // --- board model & drawing ----------------------------------------------
@@ -505,27 +755,11 @@
         if (secondary) outlineMarker(cols, secondary, true)
     }
 
-    // The bot's best move at a position. Replay frames carry it precomputed in
-    // `review.best`; variation frames compute it on demand (and cache it) so the
-    // dashed suggestion works off the main line too.
-    function bestMoveFor(cells, agent) {
-        const scored = agent.scoreMoves(fromCells(cells, 1))
-        if (!scored.length) return null
-        let best = null, bestValue = -Infinity
-        for (const { move, value } of scored) {
-            if (value > bestValue) { bestValue = value; best = move }
-        }
-        return best
-    }
-
+    // The bot's suggested move at a frame: exactly the move evalOf computed for
+    // the graph, so the dashed marker and the move played into a variation match.
     function suggestionFor(frame) {
-        if (!showSuggestion || !frame || frame.over) return null
-        if (frame.review && frame.review.best) return frame.review.best
-        if (mode === 'variation' && fineAgent) {
-            if (!frame.suggestion) frame.suggestion = bestMoveFor(frame.cells, fineAgent)
-            return frame.suggestion
-        }
-        return null
+        if (!showSuggestion || !frame || frame.over || !graphAgent) return null
+        return evalForFrame(frame).move
     }
 
     // Markers for a frame: the solid move about to be played (recorded game line
@@ -545,13 +779,16 @@
         el('score').textContent = frame.score
         el('scrub').max = frames.length - 1
         el('scrub').value = index
-        if (mode === 'variation') {
-            el('move').textContent = frame.over
-                ? 'Game over · ' + frame.movesPlayed + ' moves'
-                : 'Move ' + frame.movesPlayed
-        } else {
-            el('move').textContent = 'Move ' + frame.movesPlayed + ' of ' + (frames.length - 1)
+        let text = mode === 'variation'
+            ? (frame.over ? 'Game over · ' + frame.movesPlayed + ' moves' : 'Move ' + frame.movesPlayed)
+            : 'Move ' + frame.movesPlayed + ' of ' + (frames.length - 1)
+        // With the graph shown, the move label carries the eval too (the slider
+        // and its bare move number are hidden).
+        if (showGraph && evalSeries.length && !frame.over) {
+            const pt = evalForFrame(frame)
+            if (pt && pt.d2 != null) text += ', eval ' + Math.round(pt.d2)
         }
+        el('move').textContent = text
     }
 
     // The settled render for the current frame. While advancing, only the move
@@ -565,6 +802,7 @@
         const m = markersFor(frame, !skipping)
         paint(animBoard, m.primary, m.secondary)
         updateLabels(frame)
+        drawGraph()                      // update the marker / variation line (also while skipping)
     }
 
     // --- animation ----------------------------------------------------------
@@ -611,18 +849,18 @@
     // --- timeline advance ---------------------------------------------------
 
     // Ensure a frame exists at index+1. On the recorded line it is already
-    // stored; in a variation the next move is generated by the review bot.
-    // Returns false at the end of the line (replay end, or variation game over).
-    async function ensureNext() {
+    // stored; in a variation the next move is the bot's suggested move for the
+    // frontier position -- the exact move shown as the dashed marker, so playing
+    // forward always follows the highlighted suggestion. Returns false at the end
+    // of the line (replay end, or variation game over).
+    function ensureNext() {
         if (index < frames.length - 1) return true
         if (mode !== 'variation') return false
         const last = frames[frames.length - 1]
-        if (last.over) return false
-        const agent = await ensureFineAgent()
-        if (!agent) return false
-        const game = gameFor(last)
-        const move = agent.chooseMove(game)
+        if (last.over || !graphAgent) return false
+        const move = evalForFrame(last).move
         if (!move) return false
+        const game = gameFor(last)
         game.apply(move[0], move[1])
         last.move = move
         frames.push(capture(game, null))
@@ -638,6 +876,7 @@
         animPrimary = m.primary
         animSecondary = m.secondary
         updateLabels(next)
+        drawGraph()                      // move the position marker as each move plays
         animating = true
         lastTime = performance.now()
         rafId = requestAnimationFrame(animLoop)
@@ -779,7 +1018,6 @@
         el('app').classList.add('variation')
         el('reviewer').textContent = 'Variation from move ' + frame.movesPlayed
         applyModeUI()
-        renderMistakes()                            // clears the row (replay-only)
         animateForward(branchFrame, frontier)
         animDone = () => renderFrame()
     }
@@ -833,9 +1071,8 @@
         frames = replayFrames
         index = branchIndex
         el('app').classList.remove('variation')
-        el('reviewer').textContent = 'Reviewing game by ' + branchName
+        el('reviewer').textContent = 'Game by ' + branchName
         applyModeUI()
-        renderMistakes()
         renderFrame()
     }
 
@@ -851,18 +1088,20 @@
             el('first').title = 'First (Home)'
             el('first').onclick = () => snap(0)
         }
-        el('timeline').hidden = (mode === 'variation')
+        updateGraphVisibility()
     }
 
     // --- wiring -------------------------------------------------------------
 
     function wire() {
-        el('back').textContent = 'Exit review'
+        el('back').innerHTML = icon('arrowLeft')
+        el('share').innerHTML = icon('link')
         el('backMove').innerHTML = icon('chevronLeft')
         el('step').innerHTML = icon('chevronRight')
         el('last').innerHTML = icon('skipForward')
 
         el('back').onclick = () => { window.location.href = 'index.html' }
+        el('share').onclick = shareLink
         el('backMove').onclick = () => snap(index - 1)
         el('play').onclick = () => setPlayState('playing')
         el('ff').onclick = () => setPlayState('ff')
@@ -874,8 +1113,16 @@
         suggestion.checked = showSuggestion
         suggestion.onchange = () => {
             showSuggestion = suggestion.checked
-            try { localStorage.setItem(SUGGESTION_KEY, showSuggestion ? '1' : '0') } catch (_) {}
+            try { localStorage.setItem(SUGGESTION_KEY, showSuggestion ? '1' : '0') } catch (_) { }
             renderFrame()
+        }
+
+        const graphToggle = el('showGraph')
+        graphToggle.checked = showGraph
+        graphToggle.onchange = () => {
+            showGraph = graphToggle.checked
+            try { localStorage.setItem(GRAPH_KEY, showGraph ? '1' : '0') } catch (_) { }
+            updateGraphVisibility()
         }
 
         canvas.addEventListener('click', event => {
@@ -896,7 +1143,95 @@
             else if (event.code === 'End') { event.preventDefault(); skipToEnd() }
         })
 
+        el('zoom').oninput = e => { graphZoom = Number(e.target.value); drawGraph() }
+
+        // Graph pointer handling. A tap jumps to the point (snapping to a nearby
+        // key moment); a drag while zoomed pans the view, keeping the move marker
+        // centred; a drag while unzoomed scrubs to the cursor.
+        const SNAP_X = 16, SNAP_Y = 16
+        const cssOf = e => {
+            const rect = graphCanvas.getBoundingClientRect()
+            const cssW = graphCanvas.width / (window.devicePixelRatio || 1)
+            return { x: (e.clientX - rect.left) / rect.width * cssW, y: (e.clientY - rect.top) / rect.height * (cssW * 150 / 400) }
+        }
+        const pxToMove = cssX => Math.round(graphView.xStart + (cssX - graphView.padL) / graphView.plotW * graphView.windowW)
+        const goTo = target => {
+            const clamped = Math.max(0, Math.min(graphView.axisMax, Math.round(target)))
+            snap(mode === 'variation' ? clamped - branchIndex : clamped)
+        }
+        // Tap: jump to the move under the cursor, or to a key moment if the tap
+        // landed close to its dot in both axes.
+        const tapTo = (cssX, cssY) => {
+            let target = pxToMove(cssX)
+            if (mode !== 'variation') {
+                const v = graphView
+                let bestD = Infinity, bestN = null
+                for (const km of keyMoments) {
+                    if (!evalSeries[km.n]) continue
+                    const dx = Math.abs(cssX - (v.padL + ((km.n - v.xStart) / v.windowW) * v.plotW))
+                    const dy = Math.abs(cssY - (v.padT + (1 - (evalSeries[km.n].d2 - v.yMin) / (v.yMax - v.yMin)) * v.plotH))
+                    if (dx <= SNAP_X && dy <= SNAP_Y && dx < bestD) { bestD = dx; bestN = km.n }
+                }
+                if (bestN !== null) target = bestN
+            }
+            goTo(target)
+        }
+        let drag = null
+        graphCanvas.addEventListener('pointerdown', e => {
+            if (!graphView) return
+            const c = cssOf(e)
+            drag = { x0: c.x, y0: c.y, center0: mode === 'variation' ? branchIndex + index : index, moved: false }
+            try { graphCanvas.setPointerCapture(e.pointerId) } catch (_) { }
+        })
+        graphCanvas.addEventListener('pointermove', e => {
+            if (!drag) return
+            const c = cssOf(e)
+            if (!drag.moved && Math.abs(c.x - drag.x0) < 4 && Math.abs(c.y - drag.y0) < 4) return
+            drag.moved = true
+            const zoomed = graphView.windowW < graphView.axisMax - 0.5
+            if (zoomed) goTo(drag.center0 - (c.x - drag.x0) * (graphView.windowW / graphView.plotW))  // drag right -> earlier
+            else goTo(pxToMove(c.x))                                                                   // unzoomed: scrub
+        })
+        const endDrag = e => {
+            if (drag && !drag.moved) tapTo(drag.x0, drag.y0)   // a tap, not a drag
+            drag = null
+        }
+        graphCanvas.addEventListener('pointerup', endDrag)
+        graphCanvas.addEventListener('pointercancel', endDrag)
+
         applyModeUI()
+    }
+
+    // Copy a link to the current position: this review's URL with an `at` move
+    // parameter (the branch point when inside a variation). Flip the icon to a
+    // checkmark and show a short toast to confirm.
+    let toastTimer = null, shareResetTimer = null
+    function shareLink() {
+        const at = mode === 'variation' ? branchIndex : index
+        const p = new URLSearchParams(window.location.search)
+        p.set('at', String(at))
+        const url = window.location.origin + window.location.pathname + '?' + p.toString()
+        const done = () => {
+            el('share').innerHTML = icon('check')
+            const toast = el('toast')
+            toast.hidden = false
+            toast.style.opacity = '1'
+            clearTimeout(toastTimer)
+            toastTimer = setTimeout(() => {
+                toast.style.opacity = '0'
+                setTimeout(() => { toast.hidden = true }, 300)
+            }, 1600)
+            clearTimeout(shareResetTimer)
+            shareResetTimer = setTimeout(() => { el('share').innerHTML = icon('link') }, 1600)
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(done, done)
+        } else {
+            const ta = document.createElement('textarea')
+            ta.value = url; document.body.appendChild(ta); ta.select()
+            try { document.execCommand('copy') } catch (_) { }
+            document.body.removeChild(ta); done()
+        }
     }
 
     // Match the canvas backing store to the device pixel ratio so tiles and text
@@ -918,9 +1253,12 @@
         catch (error) { el('empty').hidden = false; return }
         frames = replayFrames
         branchName = replay.displayName || 'You'
-        try { showSuggestion = localStorage.getItem(SUGGESTION_KEY) !== '0' } catch (_) {}
+        // Open on the shared move, if any.
+        if (Number.isFinite(replay.at)) index = Math.max(0, Math.min(replayFrames.length - 1, replay.at))
+        try { showSuggestion = localStorage.getItem(SUGGESTION_KEY) !== '0' } catch (_) { }
+        try { showGraph = localStorage.getItem(GRAPH_KEY) !== '0' } catch (_) { }
         el('app').hidden = false
-        el('reviewer').textContent = 'Reviewing game by ' + branchName
+        el('reviewer').textContent = 'Game by ' + branchName
         el('scrub').max = frames.length - 1
         sizeCanvas()
         wire()

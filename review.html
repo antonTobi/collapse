@@ -42,12 +42,37 @@
             gap: 12px;
         }
 
-        #back {
-            align-self: stretch;
+        /* Back (left) and share (right) flank the centred score/username. */
+        #topbar {
+            position: relative;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 48px;
         }
 
-        #topbar {
-            text-align: center;
+        /* Centred over the first / last board columns (each column is 1/5 of the
+           board, so the column centres sit at 10% and 90%). */
+        #back, #share {
+            position: absolute;
+            top: 50%;
+            border: none;
+            background: transparent;
+            color: var(--ink);
+            padding: 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #back { left: 10%; transform: translate(-50%, -50%); }
+        #share { right: 10%; transform: translate(50%, -50%); }
+
+        #back .icon, #share .icon {
+            width: 24px;
+            height: 24px;
         }
 
         #score {
@@ -59,6 +84,26 @@
         #reviewer {
             font-size: 15px;
             color: var(--muted);
+        }
+
+        /* Sits just below the share icon (top-right, over the last column). */
+        #toast {
+            position: absolute;
+            top: calc(50% + 20px);
+            right: 10%;
+            transform: translateX(50%);
+            background: #111;
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            white-space: nowrap;
+            z-index: 10;
+            transition: opacity .3s;
+        }
+
+        #toast[hidden] {
+            display: none;
         }
 
         /* Fixed square that scales with the column. The canvas backing store is
@@ -122,6 +167,12 @@
             button.primary:hover {
                 background: #333;
             }
+
+            /* Icon-only topbar buttons stay flat; just dim on hover. */
+            #back:hover, #share:hover {
+                background: transparent;
+                color: var(--muted);
+            }
         }
 
         /* Lucide icons ride on currentColor; buttons flip colour on active/hover. */
@@ -129,10 +180,6 @@
             width: 20px;
             height: 20px;
             display: block;
-        }
-
-        #back {
-            text-align: center;
         }
 
         #controls {
@@ -169,29 +216,40 @@
             text-align: center;
         }
 
-        /* Mistake jump-buttons, chronological. Sits below the controls, so it can
-           appear after the review finishes without moving anything above it. */
-        #mistakes {
+        /* Evaluation graph: the bot's depth-2 estimate of the final score at
+           every position across the game, with key-moment dots. */
+        #graphWrap {
             display: none;
-            flex-wrap: wrap;
-            gap: 6px;
-            justify-content: center;
-            align-items: center;
+            flex-direction: column;
+            gap: 4px;
         }
 
-        #mistakes.on {
+        #graphWrap.on {
             display: flex;
         }
 
-        #mistakes .mlabel {
-            color: var(--muted);
-            font-size: 13px;
+        #graph {
+            width: 100%;
+            max-width: 400px;
+            aspect-ratio: 400 / 150;
+            display: block;
+            background: #efefef;
+            touch-action: none;
         }
 
-        #mistakes .mbtn {
-            padding: 4px 8px;
-            font-size: 13px;
-            font-variant-numeric: tabular-nums;
+        #graphControls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        #zoom {
+            flex: 1;
+            max-width: 240px;
+            accent-color: var(--ink);
         }
 
         #loading {
@@ -205,12 +263,12 @@
             display: none;
         }
 
-        /* "Show bot suggestion" toggle for the dashed marker on the board. */
+        /* Board/graph toggles: "Move suggestions" and "Eval graph". */
         #suggestion {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 7px;
+            gap: 18px;
             font-size: 14px;
             color: var(--muted);
             user-select: none;
@@ -219,6 +277,13 @@
 
         #suggestion.on {
             visibility: visible;
+        }
+
+        #suggestion label {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            cursor: pointer;
         }
 
         #suggestion input {
@@ -244,14 +309,17 @@
 
 <body>
     <main id="app" hidden>
-        <button id="back" title="Exit review">Exit review</button>
         <header id="topbar">
+            <button id="back" title="Exit review" aria-label="Exit review"></button>
             <div id="score">0</div>
-            <div id="reviewer">Reviewing game</div>
+            <div id="reviewer"></div>
+            <button id="share" title="Copy link to this review" aria-label="Copy link to this review"></button>
+            <div id="toast" hidden>Link copied!</div>
         </header>
         <canvas id="board" width="400" height="400" aria-label="Game board"></canvas>
         <div id="suggestion">
-            <label><input type="checkbox" id="showSuggestion"> Show bot suggestion</label>
+            <label><input type="checkbox" id="showSuggestion"> Move suggestions</label>
+            <label><input type="checkbox" id="showGraph"> Eval graph</label>
         </div>
         <div id="controls">
             <button id="first" title="First (Home)"></button>
@@ -262,8 +330,14 @@
             <button id="last" title="Skip to end (End)"></button>
         </div>
         <div id="timeline"><input id="scrub" type="range" min="0" max="0" value="0" aria-label="Review move"></div>
+        <div id="graphWrap">
+            <canvas id="graph" width="400" height="150" aria-label="Evaluation graph"></canvas>
+            <div id="graphControls">
+                <span>Zoom</span>
+                <input type="range" id="zoom" min="1" max="50" value="1" step="1" aria-label="Graph x zoom">
+            </div>
+        </div>
         <div id="move">Move 0</div>
-        <div id="mistakes"></div>
         <div id="loading" hidden></div>
     </main>
     <section id="empty" hidden>
