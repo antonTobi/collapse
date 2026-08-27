@@ -25,7 +25,7 @@ const Search = require('./search.js');
 const NTuple = require('./ntuple.js');
 const Replays = require('./replays.js');
 
-const WEIGHTS = 'bot/weights/dom39h.bins';
+const WEIGHTS = 'bot/weights/all7g-Rcq.bin';
 let _d2 = null;
 function d2searcher() {
     if (_d2) return _d2;

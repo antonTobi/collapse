@@ -1,5 +1,10 @@
 # Scaling search with time
 
+> **Retired-architecture note.** This document describes the 21/39-bank `dom*`
+> networks and their weight-bank / sparse-`.bins` machinery, all now retired. The
+> current deployed net is the single-bank `all7g-Rcq.bin` (virtual-cell globals);
+> see bot/README.md. This is kept as a research record.
+
 > The next evaluator experiment prompted by the ceiling documented here is in
 > [NEXT_NETWORK.md](NEXT_NETWORK.md). It tests exact-grown far-field and global
 > correction tuples, mined human-game blindspots, synthetic OOD support, and a

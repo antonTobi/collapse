@@ -5,7 +5,7 @@
 //
 //   node bot/train.js --episodes 20000 --alpha 0.1 --out bot/weights/td.bin
 //   node bot/train.js --episodes 20000 --resume bot/weights/td.bin
-//   node bot/train.js --set big --stages 3 --sym --tc --episodes 200000
+//   node bot/train.js --set mini5r --sym --tc --episodes 200000
 //
 // At state s the agent picks the move maximizing r(m) + V(afterstate(m)). After
 // playing it and letting new tiles fall to s', the value of the afterstate we
@@ -13,7 +13,7 @@
 // s' is terminal. Training seeds are disjoint from the leaderboard seeds.
 //
 // `--resume` takes the architecture from the file, so a run continues exactly
-// what it loaded; --set/--stages/--sym only apply to a fresh network. Starting
+// what it loaded; --set/--sym only apply to a fresh network. Starting
 // from bot/pretrain.js (human-return regression) rather than from zeros gives
 // TD a value function that already knows roughly what a good board looks like.
 // ============================================================================
@@ -26,7 +26,7 @@ function parseArgs(argv) {
     const a = {
         episodes: 20000, alpha: 0.1, out: path.join(__dirname, 'weights/td.bin'), resume: null,
         seedBase: 100000, report: 1000, decay: 1, maxMoves: 5000,
-        set: 'base', stages: 1, sym: false, tc: false
+        set: 'base', sym: false, tc: false
     };
     for (let i = 2; i < argv.length; i++) {
         const k = argv[i];
@@ -39,7 +39,6 @@ function parseArgs(argv) {
         else if (k === '--report') a.report = parseInt(argv[++i], 10);
         else if (k === '--sym') a.sym = true;
         else if (k === '--set') a.set = argv[++i];
-        else if (k === '--stages') a.stages = parseInt(argv[++i], 10);
         else if (k === '--tc') a.tc = true;
         else if (k === '--max-moves') a.maxMoves = parseInt(argv[++i], 10);
         else { console.error('unknown option ' + k); process.exit(1); }
@@ -65,11 +64,11 @@ function main() {
     const args = parseArgs(process.argv);
     const net = args.resume
         ? NTuple.load(args.resume, args.sym ? { sym: true } : null)
-        : new NTuple.Network(undefined, { set: args.set, sym: args.sym, stages: args.stages });
+        : new NTuple.Network(undefined, { set: args.set, sym: args.sym });
     const tc = args.tc ? new NTuple.TC(net) : null;
     const apply = tc ? (cells, d) => tc.update(cells, d) : (cells, d) => net.update(cells, d);
 
-    console.log('network: set=' + net.setName + ' sym=' + net.sym + ' stages=' + net.stages +
+    console.log('network: set=' + net.setName + ' sym=' + net.sym +
         ' weights=' + net.w.length + (tc ? ' (temporal coherence)' : ''));
 
     let alpha = args.alpha;

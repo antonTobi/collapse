@@ -21,7 +21,7 @@ const Collapse = require('./engine.js');
 const { createAgent } = require('./agents.js');
 
 function parseArgs(argv) {
-    const a = { agent: 'td:weights=bot/weights/dom39q.bin', games: 100, seedBase: 900000, out: null, stride: 1, maxPos: 1e9 };
+    const a = { agent: 'td:weights=bot/weights/all7g-Rcq.bin', games: 100, seedBase: 900000, out: null, stride: 1, maxPos: 1e9 };
     for (let i = 2; i < argv.length; i++) {
         const k = argv[i];
         if (k === '--agent') a.agent = argv[++i];

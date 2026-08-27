@@ -2,7 +2,7 @@
 // ============================================================================
 // Is the value network's *number* right, not just its ranking?
 //
-//   node bot/calib.js --weights bot/weights/dom21q.bin --positions bot/data/human-test.bin
+//   node bot/calib.js --weights bot/weights/all7g-Rcq.bin --positions bot/data/human-test.bin
 //   node bot/calib.js --weights W --positions P --moves 3      (delta calibration)
 //
 // residual.js measures self-consistency: whether one Bellman backup would move
@@ -52,7 +52,7 @@ const Starts = require('./starts.js');
 
 function parseArgs(argv) {
     const a = {
-        weights: 'bot/weights/dom21q.bin', positions: null, sample: 80, rolloutWeights: null,
+        weights: 'bot/weights/all7g-Rcq.bin', positions: null, sample: 80, rolloutWeights: null,
         rollouts: 16, moves: 0, seedBase: 800000, maxMoves: 20000, games: 8, every: 40,
         depth: 1, cap: 64, crn: false
     };

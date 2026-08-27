@@ -239,7 +239,7 @@
     // bot move-gap error stays flat. Those extra disagreements are near-ties
     // worth nothing; a disagreement count is the misleading statistic here and
     // the magnitude is the real one, which is the same lesson as in agree.js.
-    const REVIEW_WEIGHTS = 'bot/weights/dom39h.bins';
+    const REVIEW_WEIGHTS = 'bot/weights/all7g-Rcq.bin';
     // The review runs in two passes, because the cost of a pass is dominated by
     // `cap` -- the number of sampled refills at a chance node -- and the two
     // things the review has to do want very different amounts of it.

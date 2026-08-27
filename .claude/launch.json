@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "collapse",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "-p", "8123", "-c-1", "--silent"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["bot/devserver.js", "8123"],
       "port": 8123
     }
   ]

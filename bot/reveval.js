@@ -2,8 +2,8 @@
 // ============================================================================
 // Does the review feature's "biggest mistakes" list contain real mistakes?
 //
-//   node bot/reveval.js --weights bot/weights/dom21hq.bin --depth 2 --cap 16 --crn
-//   node bot/reveval.js --weights bot/weights/dom39q.bin --depth 2 --cap 16 --crn
+//   node bot/reveval.js --weights bot/weights/all7g-Rcq.bin --depth 2 --cap 16 --crn
+//   node bot/reveval.js --weights bot/weights/all7g-Rcq.bin --depth 2 --cap 16 --crn
 //
 // This measures the thing spectate.html actually does, which is not what
 // calib.js measures. calib.js prices the network's own 2nd and 3rd choices. The
@@ -55,7 +55,7 @@ const Replays = require('./replays.js');
 
 function parseArgs(argv) {
     const a = {
-        weights: 'bot/weights/dom21hq.bin', rolloutWeights: 'bot/weights/dom39q.bin',
+        weights: 'bot/weights/all7g-Rcq.bin', rolloutWeights: 'bot/weights/all7g-Rcq.bin',
         depth: 2, cap: 16, crn: false, games: 20, every: 8, rollouts: 16,
         top: 5, threshold: 25, seedBase: 810000, maxMoves: 20000, holdout: 10, minScore: 0
     };

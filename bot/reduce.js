@@ -90,7 +90,15 @@ function main() {
 
     const t = src.t;
     const pairs = mirrorPairs(t);
-    const setName = src.setName + 'r';
+    // Normally this reduces set X to Xr. But a network trained directly on an
+    // already mirror-reduced set has no partner to drop -- every tuple is its
+    // own representative, so pairs.length === t.n -- and no Xr to map to. In
+    // that case keep the set and only fold the self-mirror tuples' tables while
+    // turning on selfOnce, so the file becomes compact.js-ready without changing
+    // the function. The self-fold and the value check below are identical either
+    // way; only the destination set name differs.
+    let setName = src.setName + 'r';
+    if (!NTuple.SETS[setName] && pairs.length === t.n) setName = src.setName;
     if (!NTuple.SETS[setName]) {
         console.error(`no reduced set "${setName}" is defined in ntuple.js for "${src.setName}"`);
         process.exit(1);
@@ -101,18 +109,15 @@ function main() {
         process.exit(1);
     }
 
-    for (let bank = 0; bank < src.stages; bank++) {
-        const so = bank * src.bank, dobase = bank * dst.bank;
-        pairs.forEach((p, r) => {
-            const len = t.len[p.keep], size = Math.pow(V, len);
-            const from = so + t.wbase[p.keep], to = dobase + dst.t.wbase[r];
-            for (let i = 0; i < size; i++) dst.w[to + i] = src.w[from + i];
-            if (p.fold >= 0) {
-                const other = so + t.wbase[p.fold];
-                for (let i = 0; i < size; i++) dst.w[to + i] += src.w[other + permuteIndex(i, len, p.perm)];
-            }
-        });
-    }
+    pairs.forEach((p, r) => {
+        const len = t.len[p.keep], size = Math.pow(V, len);
+        const from = t.wbase[p.keep], to = dst.t.wbase[r];
+        for (let i = 0; i < size; i++) dst.w[to + i] = src.w[from + i];
+        if (p.fold >= 0) {
+            const other = t.wbase[p.fold];
+            for (let i = 0; i < size; i++) dst.w[to + i] += src.w[other + permuteIndex(i, len, p.perm)];
+        }
+    });
 
     // The only claim worth making is that the two networks agree, so check it on
     // boards a real game produces rather than on anything convenient.
@@ -122,10 +127,9 @@ function main() {
     const st = src.t;
     function sourceValue(cells) {
         cells = src.prepare(cells);
-        const bank = src.stages > 1 ? src.preparedStage(cells) * src.bank : 0;
         let sum = 0;
         for (let k = 0; k < st.n; k++) {
-            const o = st.off[k], l = st.len[k], b = bank + st.wbase[k];
+            const o = st.off[k], l = st.len[k], b = st.wbase[k];
             let a = 0, m = 0;
             for (let c = 0; c < l; c++) {
                 a = a * V + cells[st.cells[o + c]];

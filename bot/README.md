@@ -2,23 +2,30 @@
 
 Headless implementation of the game plus a place to develop and benchmark agents.
 
+> **Current deployed net:** `weights/all7g-Rcq.bin` — a **single-bank** n-tuple network
+> whose global board state enters through **virtual-cell features** (hole/5/6 counts,
+> exposed-6s, legal-move mobility, per-column heights) rather than weight banks, deployed
+> via reduce → compact → quantize (4.85 MB int16). It replaced the 21/39-bank
+> `dom21`/`dom39` family, which conditioned on state by splitting the weights into
+> 6-count banks. Sections below that discuss weight banks, sparse `.bins` storage, or the
+> `dom*`/`big*` nets describe that **retired** architecture and are kept as a research
+> record (see SCALING.md / ANALYSIS.md).
+
 | file | what it is |
 | --- | --- |
 | `engine.js` | The rules, headless. Verified move-for-move identical to `game.js` (board, score, PRNG, splits, move encoding, game-over) — no rendering, achievements or storage. |
 | `agents.js` | Agent registry. An agent is `{ name, chooseMove(game) -> [i, j] }`. |
 | `eval.js` | Position features and the linear evaluation the heuristic agents share. |
-| `ntuple.js` | The learned value network: tuple sets, symmetry, stage banks, weight file format. |
+| `ntuple.js` | The learned value network: tuple sets, symmetry (mirror folding), virtual-cell global features, weight file format. |
 | `run.js` | CLI benchmark: runs every agent on the same seeds and compares. |
 | `harness.js` | Worker pool used by the tuning and fitting scripts. |
 | `search.js` | Expectimax over the value network: max nodes on full boards, chance nodes over the tiles that drop into the holes. |
-| `grow.js` | Copy a trained network into a bigger architecture (more tuples, more stage banks) without changing what it computes. |
 | `starts.js` | Sample positions from search play, for training episodes to start from. |
 | `hstarts.js` | Start positions drawn from human games, optionally mutated, for training a network that has to evaluate positions it would never reach. Holds out 1 game in 10. |
 | `reduce.js` | Drop the mirror-duplicated half of a network's tuples. Same function, 40% fewer table reads. |
 | `compact.js` | Fold every subset-redundant tuple into a tuple containing it. Same function, 64% fewer lookups, 1.6-1.9x faster. |
 | `record.js` | Save a game as a replay (seed + move list) for the spectator, or `--scan` a seed range and keep the best. |
 | `quantize.js` | Store the weights as int16 with a per-table scale. Half the memory traffic, 1.12x end to end, -14 +- 67. |
-| `shrink.js` | Drop the 91% of weights nobody reads: one bank-independent table plus a per-bank correction where it earns its place. Writes a sparse `.bins` file 8.8x smaller than the int16 one, for -0 +- 90. |
 | `corpus.js` | Freeze a set of real-game decisions to a file, so a value function can be judged without playing anything. |
 | `agree.js` | Does a candidate value function make the same moves as a reference one? Agreement, regret and correlation over a corpus. |
 | `tuples.html` | Every tuple shape the network reads, drawn on a board. Open it directly; it reads `ntuple.js`, so it cannot go stale. |
@@ -32,6 +39,7 @@ Headless implementation of the game plus a place to develop and benchmark agents
 | `train.js` | TD(0) self-play training of the value network, single process. |
 | `ptrain.js` | The same training across all cores (Hogwild on a SharedArrayBuffer), and the only one that can train with a search behaviour policy. |
 | `spectate.js` + `../spectate.html` | Play a game out headlessly, then scrub the replay with a slider, the arrow keys or Home/End. |
+| `devserver.js` | Zero-dependency static server for local dev of the browser app. `node bot/devserver.js [port]` from the repo root, then open `http://localhost:8123` (index / review / spectate / editor). |
 
 Everything that learns from human play goes through one loader:
 
@@ -40,23 +48,26 @@ Everything that learns from human play goes through one loader:
 | `fetch-replays.js` | Download finished games from Firestore to `data/replays.jsonl`. |
 | `replays.js` | Load, filter and walk those games. The one place that knows the move encoding and the quality filter. |
 | `fit.js` | Fit `eval.js` weights to the moves humans chose (softmax ranking loss). |
-| `pretrain.js` | Fit the value network to human play, by MC return and/or ranking loss. |
 | `disagree.js` | Where a given agent disagrees with strong humans, and which features move in those positions. |
 | `human.js` | Play an agent on the exact seeds humans played, and compare the means. |
 
 ## Where this stands
 
-The best agent is expectimax over an n-tuple value network:
+The best agent is expectimax over an n-tuple value network. The current deployed
+net is `all7g-Rcq.bin` (single-bank, virtual-cell globals):
 
 ```bash
-node bot/run.js --agents "fx:weights=bot/weights/dom39q.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6" --seeds 200 --jobs 10
+node bot/run.js --agents "fx:weights=bot/weights/all7g-Rcq.bin,depth=2,cap=16,rootk=6" --seeds 200 --jobs 10
 ```
 
-**10 813 ± 71** over seeds 1-200, median 11 000, best 12 675. The previous best
-agent in this folder scored 6450 with a worst game of 272. A strong human
+**10 608 ± 100** at depth 2 over seeds 1-100 (greedy 8933). It beats the retired
+deployed net `dom39h` by +271 at depth 2 and by +566 on off-distribution
+(mutated) positions — where it is also far better calibrated (bias -1 vs +635) —
+while being single-bank and 3.4x smaller (4.85 MB vs 16.7 MB). A strong human
 averages around 7400.
 
-The ladder that got there, on seeds 1-100 except the last row:
+The **retired banked-era** ladder that reached the previous best (`dom39q`), on
+seeds 1-100 except the last row:
 
 | | mean | ms/move |
 | --- | ---: | ------: |
@@ -409,63 +420,34 @@ no per-move evaluations; pick the agent and seed directly if those are wanted.
 
 ### Which weight files are in the repository
 
-Only `bot/weights/big-td.bin` (12 MB) and the small original `base` networks.
-The larger ones are gitignored, because a 156 MB blob in git history is
-permanent:
+| file | size | what it is |
+| ---- | ---: | ---------- |
+| `all7g-Rcq.bin` | 4.85 MB | **the deployed net**: `mini5_all7g` trained 3M + 300k anneal, then reduce -> compact -> quantize (int16). Depth-2 10 608, greedy 8933. The spectator and the game-review page both open on it. |
+| `all7g-3M-anneal300k.bin` | 10 MB | the same net before the deploy transforms (float32), for retraining or analysis. |
+| `mini5.bin` | 7 MB | the first single-bank virtual-globals net (`mini5r`: 5 globals, no legal/height features). Greedy 7598. |
+| `c_base.bin` | 0.3 MB | minimal control (`base`: 2x2 squares + 1x4 runs, no globals). Greedy 5735. |
 
-| file | size | what it is | how to get it |
-| ---- | ---: | ---------- | ------------- |
-| `big-td.bin` | 12 MB | `big`, 1 bank, 1.65M episodes | committed |
-| `big-s3-final.bin` | 35 MB | the above grown to 3 banks, +1.2M episodes | `grow.js --stages 3`, then `ptrain.js` |
-| `bigx-s7.bin` | 87 MB | the above grown to the `bigx` set and 7 banks, +1.6M episodes | `grow.js --set bigx`, `grow.js --edges 2,4,6,8,10,12`, then `ptrain.js` |
-| `dom21.bin` | 156 MB | the above mirror-reduced, grown to `domsr` and 21 banks, +6M episodes | the pipeline below |
-| `dom21c.bin` | 151 MB | `dom21.bin` compacted -- same function, 1.6-1.9x faster | `compact.js` |
-| `dom21q.bin` | 75 MB | `dom21c.bin` quantised to int16 | `quantize.js` |
-| `dom39.bin` | 290 MB | `dom21.bin` with the 6-count banks refined to 13 bins (39 banks), +12.5M episodes | `grow.js --edges 1,...,12`, then `ptrain.js` |
-| `dom39c.bin` | 280 MB | `dom39.bin` compacted -- 78 tuples down to 28 lookups | `compact.js` |
-| `dom39q.bin` | 140 MB | `dom39c.bin` quantised to int16 -- **the file to play with** | `quantize.js` |
-| `dom39s.bins` | 15 MB | `dom39c.bin` with 8M of its 73.4M weights kept and the rest read from one bank-independent table, stored sparsely. Equal strength, 1.9x slower. Superseded: its read counts came from self-play only | `shrink.js` |
-| `dom39h.bins` | **17 MB** | the same, counted over human positions as well -- **the file the spectator reviews with**. 5x more accurate than `dom39s` off-distribution, same strength, same speed | `shrink.js --starts` |
-| `dom21h3.bin` | 156 MB | `dom21.bin` retrained on human start positions with exploration, +27M episodes. An *evaluator*, 733 points weaker at playing | `hstarts.js`, then `ptrain.js --starts` |
-| `dom21hc.bin` | 151 MB | `dom21h3.bin` compacted | `compact.js` |
-| `dom21hq.bin` | 75 MB | `dom21hc.bin` quantised -- **the file to analyse with, at depth 2**. See ANALYSIS.md | `quantize.js` |
-
-The whole pipeline from the committed network, every step exact and checked:
+The whole pipeline from a fresh run, every deploy step exact and value-checked:
 
 ```bash
-node bot/reduce.js  --in bot/weights/bigx-s7.bin   --out bot/weights/bigxr-s7.bin
-node bot/grow.js    --in bot/weights/bigxr-s7.bin  --out bot/weights/domsr-s7.bin  --set domsr
-node bot/grow.js    --in bot/weights/domsr-s7.bin  --out bot/weights/domsr-s21.bin --five
-node bot/ptrain.js  --jobs 10 --resume bot/weights/domsr-s21.bin --out bot/weights/dom21.bin     --episodes 6000000 --alpha 0.02 --alpha-end 0.002 --report 250000 --seed-base 200000000
-node bot/grow.js    --in bot/weights/dom21.bin     --out bot/weights/dom39-seed.bin --edges 1,2,3,4,5,6,7,8,9,10,11,12
-node bot/ptrain.js  --jobs 10 --resume bot/weights/dom39-seed.bin --out bot/weights/dom39.bin    --episodes 12000000 --alpha 0.02 --alpha-end 0.002 --report 250000 --seed-base 500000000
-node bot/compact.js  --in bot/weights/dom39.bin  --out bot/weights/dom39c.bin
-node bot/quantize.js --in bot/weights/dom39c.bin --out bot/weights/dom39q.bin
+# train from zeros -- single-bank; global state comes from virtual-cell features
+node bot/ptrain.js --jobs 8 --set mini5_all7gr --sym \
+  --episodes 3000000 --alpha 0.02 --alpha-end 0.004 \
+  --starts bot/data/mut-starts.bin --start-frac 0.5 --start-moves 0 \
+  --report 100000 --out bot/weights/all7g-3M.bin
+node bot/ptrain.js --jobs 8 --resume bot/weights/all7g-3M.bin \
+  --episodes 300000 --alpha 0.002 --alpha-end 0.002 \
+  --starts bot/data/mut-starts.bin --start-frac 0.5 --start-moves 0 \
+  --out bot/weights/all7g-3M-anneal300k.bin
+# deploy: mirror-fold -> subset-fold -> int16
+node bot/reduce.js   --in bot/weights/all7g-3M-anneal300k.bin --out bot/weights/all7g-R.bin
+node bot/compact.js  --in bot/weights/all7g-R.bin  --out bot/weights/all7g-Rc.bin
+node bot/quantize.js --in bot/weights/all7g-Rc.bin --out bot/weights/all7g-Rcq.bin
 ```
 
-And, optionally, the compression pass. The counting run is the expensive part
-and the part that decides the result, so save its output and reuse it while
-sweeping `--keep`:
-
-```bash
-node bot/shrink.js --in bot/weights/dom39c.bin --out bot/weights/dom39s.bins \
-                   --keep 8000000 --games 24000 --jobs 4 --save-counts /tmp/reads.bin
-node bot/corpus.js --agent "fx:weights=bot/weights/dom39q.bin,depth=2,cap=8,capDeep=2,topk=2,rootk=6" \
-                   --games 250 --stride 3 --out /tmp/corpus.bin
-node bot/agree.js  --corpus /tmp/corpus.bin --ref bot/weights/dom39c.bin --cand bot/weights/dom39s.bins
-```
-
-The alpha schedule on that last training step is not a detail. The same growth
-trained at `--alpha 0.005` moved the network by nothing in 2.65M episodes;
-0.02 -> 0.002 moved it +45 in a tenth of that. Bank differentiation rate scales
-with alpha, and the weight noise that comes with a high alpha is temporary --
-it anneals away and costs ~100 points until it does, which is why a mid-run
-benchmark of this run reads about 100 low. See LEADERBOARD.md.
-
-Everything in the leaderboard below `big-td.bin` therefore runs from a clone;
-the top rows need their network trained first. The spectator opens on an
-agent whose weights are committed, and lists the stronger ones after it.
-
+The alpha schedule matters: keep it high through the bulk (0.02 -> 0.004 over the
+main run) so the many hybrid tables fill in, then a short constant-0.002 anneal to
+cut weight noise.
 Three logs sit beside this one, and they answer different questions.
 `bot/LEADERBOARD.md` has every measurement of playing strength, including the
 negative ones. `bot/SCALING.md` is the investigation into whether search can be

@@ -1,5 +1,10 @@
 # Next network: OOD robustness without giving up strength
 
+> **Retired-architecture note.** This document describes the 21/39-bank `dom*`
+> networks and their weight-bank / sparse-`.bins` machinery, all now retired. The
+> current deployed net is the single-bank `all7g-Rcq.bin` (virtual-cell globals);
+> see bot/README.md. This is kept as a research record.
+
 ## Decision summary
 
 Start with a **hierarchical n-tuple correction network**, not a wholesale neural

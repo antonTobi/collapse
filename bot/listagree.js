@@ -2,7 +2,7 @@
 // ============================================================================
 // Do two reviewers highlight the same mistakes?
 //
-//   node bot/listagree.js --a bot/weights/dom39q.bin --b bot/weights/dom39s.bins
+//   node bot/listagree.js --a bot/weights/all7g-Rcq.bin --b bot/weights/all7g-Rcq.bin
 //
 // The criterion the spectator's review is actually judged by is not "is the
 // number right" but "is this the same list". This runs both networks over whole
@@ -16,7 +16,7 @@ const Search = require('./search.js');
 const NTuple = require('./ntuple.js');
 const Replays = require('./replays.js');
 
-const a = { a: 'bot/weights/dom39h.bins', b: 'bot/weights/dom39h.bins',
+const a = { a: 'bot/weights/all7g-Rcq.bin', b: 'bot/weights/all7g-Rcq.bin',
     depth: 2, cap: 64, depthA: 0, capA: 0, crn: true, games: 6, top: 5, min: 100,
     holdout: 10, spread: false };
 for (let i = 2; i < process.argv.length; i++) {

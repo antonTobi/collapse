@@ -10,7 +10,7 @@
 // that one extra ply can already see, which is the operational blindspot we
 // want a scalable evaluator to repair.
 //
-//   node bot/blindspots.js --weights bot/weights/dom39h.bins \
+//   node bot/blindspots.js --weights bot/weights/all7g-Rcq.bin \
 //       --partition train --out bot/data/blindspots-train.bin
 
 const path = require('path');
@@ -22,7 +22,7 @@ const Starts = require('./starts.js');
 
 function parseArgs(argv) {
     const a = {
-        weights: path.join(__dirname, 'weights/dom39h.bins'),
+        weights: path.join(__dirname, 'weights/all7g-Rcq.bin'),
         replays: Replays.DEFAULT_FILE,
         out: path.join(__dirname, 'data/blindspots-train.bin'),
         games: 0, minScore: 0, jump: 300, lift: 200,

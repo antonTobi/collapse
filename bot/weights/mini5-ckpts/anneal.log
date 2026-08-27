@@ -1,0 +1,18 @@
+start pool: 200 000 positions from bot/data/mut-starts.bin, used for 50% of episodes
+network: set=mini5r sym=true stages=1 weights=1801142  jobs=8  lambda=0
+ep 20000 (9951 seeded)  mean(last 4000) 7519  alpha 0.0020  82s  243 ep/s
+ep 40000 (19999 seeded)  mean(last 4000) 7531  alpha 0.0020  169s  236 ep/s
+ep 60000 (29988 seeded)  mean(last 4000) 7531  alpha 0.0020  253s  237 ep/s
+ep 80000 (39987 seeded)  mean(last 4000) 7497  alpha 0.0020  334s  239 ep/s
+ep 100000 (49907 seeded)  mean(last 4000) 7516  alpha 0.0020  417s  240 ep/s
+ep 120000 (59855 seeded)  mean(last 4000) 7513  alpha 0.0020  500s  240 ep/s
+ep 140000 (69822 seeded)  mean(last 4000) 7561  alpha 0.0020  584s  240 ep/s
+ep 160000 (79784 seeded)  mean(last 4000) 7518  alpha 0.0020  663s  241 ep/s
+ep 180000 (89650 seeded)  mean(last 4000) 7477  alpha 0.0020  744s  242 ep/s
+ep 200000 (99525 seeded)  mean(last 4000) 7546  alpha 0.0020  826s  242 ep/s
+ep 220000 (109509 seeded)  mean(last 4000) 7552  alpha 0.0020  908s  242 ep/s
+ep 240000 (119609 seeded)  mean(last 4000) 7496  alpha 0.0020  991s  242 ep/s
+ep 260000 (129721 seeded)  mean(last 4000) 7482  alpha 0.0020  1073s  242 ep/s
+ep 280000 (139677 seeded)  mean(last 4000) 7503  alpha 0.0020  1156s  242 ep/s
+ep 300000 (149707 seeded)  mean(last 4000) 7494  alpha 0.0020  1231s  244 ep/s
+saved bot/weights/mini5-ep1500000-annealed.bin (164 tuples, 1801142 weights)

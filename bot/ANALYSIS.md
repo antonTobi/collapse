@@ -1,5 +1,10 @@
 # A value network for *analysing* positions
 
+> **Retired-architecture note.** This document describes the 21/39-bank `dom*`
+> networks and their weight-bank / sparse-`.bins` machinery, all now retired. The
+> current deployed net is the single-bank `all7g-Rcq.bin` (virtual-cell globals);
+> see bot/README.md. This is kept as a research record.
+
 `SCALING.md` and `LEADERBOARD.md` chase playing strength. This is a different
 target: a network that evaluates **any** position accurately, including ones it
 would never reach itself, so that a human game can be annotated move by move —

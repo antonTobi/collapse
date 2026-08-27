@@ -1,19 +1,9 @@
 #!/usr/bin/env node
-// Fast architecture invariants for NEXT_NETWORK.md. This is intentionally a
+// Fast architecture invariants for the n-tuple network. This is intentionally a
 // unit/smoke test; score claims require the multi-seed experiment in the doc.
 
 const assert = require('assert');
 const NT = require('./ntuple.js');
-
-function isPrefix(a, b) {
-    if (a.n > b.n) return false;
-    for (let k = 0; k < a.n; k++) {
-        if (a.len[k] !== b.len[k]) return false;
-        for (let c = 0; c < a.len[k]; c++)
-            if (a.cells[a.off[k] + c] !== b.cells[b.off[k] + c]) return false;
-    }
-    return true;
-}
 
 function mirror(cells) {
     const out = new Uint8Array(25);
@@ -31,57 +21,52 @@ function randomBoard() {
     return c;
 }
 
-for (const base of ['doms', 'domsrc']) for (const suffix of ['far', 'global'])
-    assert(isPrefix(NT.tupleSet(base), NT.tupleSet(base + suffix)), base + ' prefix of ' + base + suffix);
-assert(isPrefix(NT.tupleSet('doms'), NT.tupleSet('domshybrid')));
-assert(isPrefix(NT.tupleSet('domsrc'), NT.tupleSet('domsrchybrid')));
+// --- mini5 virtual-cell features (indices 25..29) --------------------------
+// GLOBAL = { ZEROES:25, FIVES:26, SIXES:27, FIVE_COMP:28, EXPOSED:29 }, each 0..6
+// (five-components 0..3). idx = i*5 + j, i = column, j = row (0 = bottom).
+const mini = new NT.Network(null, { set: 'mini5r', sym: true });
 
-// Known global bins on simple boards.
-const global = new NT.Network(undefined, { set: 'domsrcglobal', sym: true, selfOnce: true });
+// A full board of 1s: no holes, fives, sixes, components or exposures.
 const ones = new Uint8Array(25).fill(1);
-let f = global.prepare(ones);
-assert.deepStrictEqual(Array.from(f.slice(25)), [0, 0, 6, 6, 0, 0, 0, 0]);
-const checker = Uint8Array.from({ length: 25 }, (_, k) => (((k / 5) | 0) + k % 5) % 2 + 1);
-f = global.prepare(checker);
-assert.deepStrictEqual(Array.from(f.slice(25)), [0, 0, 0, 0, 0, 6, 0, 0]);
+assert.deepStrictEqual(Array.from(mini.prepare(ones).slice(25, 30)), [0, 0, 0, 0, 0]);
 
-// Exact growth in memory: arbitrary old weights plus zero new tables must be
-// the same function on ordinary and mirrored boards.
-const old = new NT.Network(undefined, { set: 'domsrc', sym: true, selfOnce: true });
-for (let k = 0; k < old.w.length; k++) old.w[k] = ((k * 37) % 101 - 50) / 17;
-const grown = new NT.Network(undefined, { set: 'domsrchybrid', sym: true, selfOnce: true });
-grown.w.set(old.w);
+// A board with a 2x2 block of 5s (one component) + a lone 5 (second component),
+// a center 6 (4 non-6 nbrs -> exposed), an edge 6 (3 non-6 nbrs -> exposed) and
+// a corner 6 (only 2 nbrs -> never exposed). 5 fives -> FIVES bucket 2,
+// 3 sixes -> SIXES bucket 1, components 2 (cap 3), exposed 2, no holes.
+const rich = new Uint8Array(25).fill(1);
+const put = (i, j, v) => rich[i * 5 + j] = v;
+put(0, 0, 5); put(0, 1, 5); put(1, 0, 5); put(1, 1, 5); put(3, 3, 5);
+put(2, 2, 6);   // center: exposed
+put(2, 4, 6);   // top edge: exposed
+put(4, 4, 6);   // corner: not exposed
+assert.deepStrictEqual(Array.from(mini.prepare(rich).slice(25, 30)), [0, 2, 1, 2, 2]);
+
+// Features are mirror-invariant, and a sym net with any weights is too.
+for (let k = 0; k < mini.w.length; k++) mini.w[k] = ((k * 37) % 101 - 50) / 17;
 for (let n = 0; n < 40; n++) {
     const c = randomBoard();
-    assert(Math.abs(old.value(c) - grown.value(c)) < 1e-5);
-    assert(Math.abs(grown.value(c) - grown.value(mirror(c))) < 1e-5);
+    const fa = Array.from(mini.prepare(c).slice(25, 30));
+    const fb = Array.from(mini.prepare(mirror(c)).slice(25, 30));
+    assert.deepStrictEqual(fa, fb, 'global features are mirror-invariant');
+    assert(Math.abs(mini.value(c) - mini.value(mirror(c))) < 1e-5, 'sym value is mirror-invariant');
 }
 
-// A frozen-prefix update must not touch a single inherited weight and must
-// change at least one appended weight.
-const prefix = old.t;
-const before = grown.w.slice(0, prefix.size);
-grown.update(randomBoard(), 100, prefix.n);
-assert.deepStrictEqual(grown.w.slice(0, prefix.size), before);
-let changed = false;
-for (let k = prefix.size; k < grown.w.length; k++) if (grown.w[k] !== 0) { changed = true; break; }
-assert(changed, 'tail update changed an appended weight');
-
-// The feature-aware architecture survives the unchanged file codec.
-const roundtrip = NT.decode(NT.encode(grown));
+// --- feature-aware codec roundtrip on a global (mini5r) net ----------------
+const roundtrip = NT.decode(NT.encode(mini));
 for (let n = 0; n < 10; n++) {
     const c = randomBoard();
-    assert(Math.abs(roundtrip.value(c) - grown.value(c)) < 1e-5);
+    assert(Math.abs(roundtrip.value(c) - mini.value(c)) < 1e-5, 'codec preserves the feature-aware value');
 }
 
-console.log('next-network architecture invariants: ok');
+console.log('n-tuple architecture invariants: ok');
 
 if (process.argv.includes('--timing')) {
-    const names = ['domsrc', 'domsrcfarrc', 'domsrcglobalrc', 'domsrchybridrc'];
+    const names = ['baser', 'mini5rc', 'mini5_all7grc'];
     const boards = Array.from({ length: 4096 }, (_, n) =>
         Uint8Array.from({ length: 25 }, (__, k) => 1 + ((n * 17 + k * 11 + (n >> 3)) % 6)));
     const nets = names.map(name => {
-        const net = new NT.Network(undefined, { set: name, sym: true, selfOnce: true, stages: 3, five: true });
+        const net = new NT.Network(undefined, { set: name, sym: true, selfOnce: true });
         net.w.fill(0.03125);
         return net;
     });

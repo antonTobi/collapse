@@ -9,7 +9,7 @@ const { fork } = require('child_process');
 const Collapse = require('./engine.js');
 const { createAgent } = require('./agents.js');
 
-const SPEC = 'fx:weights=bot/weights/dom39h.bins,depth=2,cap=16,topk=2,rootk=6,crn=1';
+const SPEC = 'fx:weights=bot/weights/all7g-Rcq.bin,depth=2,cap=16,topk=2,rootk=6,crn=1';
 
 function args(argv) {
     const out = { games: 1000, jobs: 4, seedBase: 1, out: 'bot/data/dom39h-depth2-1000.json' };

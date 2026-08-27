@@ -29,7 +29,7 @@ const path = require('path');
 const Collapse = require('./engine.js');
 const { createAgent } = require('./agents.js');
 
-const DEFAULT_W = 'bot/weights/dom21q.bin';
+const DEFAULT_W = 'bot/weights/all7g-Rcq.bin';
 
 // The ladder from search.js, as separate agent specs so each can be timed.
 const RUNGS = (process.env.CRN ? [

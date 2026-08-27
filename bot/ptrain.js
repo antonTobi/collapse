@@ -54,9 +54,10 @@ function parseArgs(argv) {
     const a = {
         episodes: 100000, alpha: 0.1, out: path.join(__dirname, 'weights/ptd.bin'), resume: null,
         seedBase: 2000000, report: 5000, decay: 1, maxMoves: 20000, jobs: 8,
-        set: 'base', stages: 1, sym: false, alphaEnd: 0, lambda: 0,
+        set: 'base', sym: false, alphaEnd: 0, lambda: 0,
         searchDepth: 1, searchCap: 16, searchCapDeep: 4, searchTopk: 2, searchRootk: 6, searchTarget: false, sub: '',
         lambdaEnd: -1, starts: null, startFrac: 0.5, startMoves: 0,
+        checkpointEvery: 0, checkpointDir: null,
         siblings: 0, sibAlpha: 1, sibEvery: 1, sibCenter: false, explore: 0, exploreRank: 2,
         distil: 0, frozen: null, rank: 0, rankK: 3, freezePrefix: null, trainFrom: 0
     };
@@ -74,10 +75,11 @@ function parseArgs(argv) {
         else if (k === '--resume') a.resume = argv[++i];
         else if (k === '--seed-base') a.seedBase = parseInt(argv[++i], 10);
         else if (k === '--report') a.report = parseInt(argv[++i], 10);
+        else if (k === '--checkpoint-every') a.checkpointEvery = parseInt(argv[++i], 10);
+        else if (k === '--checkpoint-dir') a.checkpointDir = argv[++i];
         else if (k === '--jobs') a.jobs = parseInt(argv[++i], 10);
         else if (k === '--sym') a.sym = true;
         else if (k === '--set') a.set = argv[++i];
-        else if (k === '--stages') a.stages = parseInt(argv[++i], 10);
         else if (k === '--max-moves') a.maxMoves = parseInt(argv[++i], 10);
         else if (k === '--search-depth') a.searchDepth = parseInt(argv[++i], 10);
         else if (k === '--search-cap') a.searchCap = parseInt(argv[++i], 10);
@@ -534,7 +536,7 @@ async function main() {
         meta = loaded.meta;
         initial = loaded.w;
     } else {
-        meta = { set: args.set, sym: args.sym, stages: args.stages };
+        meta = { set: args.set, sym: args.sym };
     }
     if (args.freezePrefix) {
         if (!args.resume) {
@@ -580,7 +582,7 @@ async function main() {
             args.starts + ', used for ' + (100 * args.startFrac).toFixed(0) + '% of episodes');
     }
 
-    console.log('network: set=' + meta.set + ' sym=' + meta.sym + ' stages=' + (meta.stages || 1) +
+    console.log('network: set=' + meta.set + ' sym=' + meta.sym +
         ' weights=' + size + '  jobs=' + args.jobs + '  lambda=' + args.lambda +
         (args.searchDepth > 1 ? '  behaviour=expectimax depth ' + args.searchDepth : '') +
         (args.searchTarget ? '  target=search' : '') +
@@ -602,7 +604,12 @@ async function main() {
         workers.push(new Worker(__filename, { workerData: { sab, meta, args, index: k, starts: startPool, frozen: frozenSab } }));
     }
 
-    let issued = 0, done = 0, lastReport = 0, seededDone = 0;
+    let issued = 0, done = 0, lastReport = 0, seededDone = 0, lastCheckpoint = 0;
+    // Numbered checkpoints for a learning curve: <out-basename>-ep<N>.bin in
+    // checkpointDir, in addition to the rolling --out. One extra dense write
+    // per interval; benchmarked afterwards by bot/bench-curve.js.
+    const ckptBase = path.basename(args.out).replace(/\.[^.]*$/, '');
+    const ckptDir = args.checkpointDir || path.dirname(args.out);
     const window = [];
     const t0 = Date.now();
 
@@ -646,6 +653,12 @@ async function main() {
                         (args.lambda > 0 ? '  lambda ' + lambdaAt(done / args.episodes).toFixed(3) : '') +
                         '  ' + secs.toFixed(0) + 's  ' + (done / secs).toFixed(0) + ' ep/s');
                     NTuple.save(args.out, net);
+                }
+                if (args.checkpointEvery > 0 && done - lastCheckpoint >= args.checkpointEvery) {
+                    lastCheckpoint = done;
+                    const file = path.join(ckptDir, ckptBase + '-ep' + done + '.bin');
+                    NTuple.save(file, net);
+                    console.log('  checkpoint ' + file);
                 }
                 if (!dispatch(w)) { w.postMessage({ stop: true }); if (--live === 0) resolve(); }
             });

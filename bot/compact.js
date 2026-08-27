@@ -123,13 +123,10 @@ function main() {
     }
 
     // Copy the kept tables across (their offsets differ between the two sets).
-    for (let bank = 0; bank < src.stages; bank++) {
-        const so = bank * src.bank, dof = bank * dst.bank;
-        for (let d = 0; d < dt.n; d++) {
-            const a = dstHost[d], size = Math.pow(V, dt.len[d]);
-            const from = so + st.wbase[a], to = dof + dt.wbase[d];
-            for (let i = 0; i < size; i++) dst.w[to + i] = src.w[from + i];
-        }
+    for (let d = 0; d < dt.n; d++) {
+        const a = dstHost[d], size = Math.pow(V, dt.len[d]);
+        const from = st.wbase[a], to = dt.wbase[d];
+        for (let i = 0; i < size; i++) dst.w[to + i] = src.w[from + i];
     }
 
     // Fold the rest in.
@@ -153,18 +150,15 @@ function main() {
             const m = permuteIndex(x, lenA, permA);
             return x < m ? x : m;
         };
-        for (let bank = 0; bank < src.stages; bank++) {
-            const from = bank * src.bank + st.wbase[a];
-            const to = bank * dst.bank + dt.wbase[d];
-            for (let x = 0; x < sizeB; x++) {
-                const pa = permuteIndex(x, lenB, p);
-                let add;
-                if (!selfA && !selfB) add = src.w[from + pa];
-                else if (selfA && selfB) add = src.w[from + canonA(pa)];
-                else if (selfA && !selfB) add = 0.5 * src.w[from + canonA(pa)];
-                else add = src.w[from + pa] + src.w[from + permuteIndex(permuteIndex(x, lenB, permB), lenB, p)];
-                dst.w[to + x] += add;
-            }
+        const from = st.wbase[a], to = dt.wbase[d];
+        for (let x = 0; x < sizeB; x++) {
+            const pa = permuteIndex(x, lenB, p);
+            let add;
+            if (!selfA && !selfB) add = src.w[from + pa];
+            else if (selfA && selfB) add = src.w[from + canonA(pa)];
+            else if (selfA && !selfB) add = 0.5 * src.w[from + canonA(pa)];
+            else add = src.w[from + pa] + src.w[from + permuteIndex(permuteIndex(x, lenB, permB), lenB, p)];
+            dst.w[to + x] += add;
         }
     }
 

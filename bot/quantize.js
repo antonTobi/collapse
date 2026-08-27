@@ -40,16 +40,14 @@ function main() {
 
     const dst = new NTuple.Network(undefined, Object.assign({}, src.meta, { q16: true }));
     const t = src.t;
-    for (let b = 0; b < src.stages; b++) {
-        for (let k = 0; k < t.n; k++) {
-            const size = Math.pow(NTuple.V, t.len[k]);
-            const o = b * src.bank + t.wbase[k];
-            let mx = 0;
-            for (let i = 0; i < size; i++) { const v = Math.abs(src.w[o + i]); if (v > mx) mx = v; }
-            const s = mx > 0 ? mx / 32767 : 1;
-            dst.scale[b * t.n + k] = s;
-            for (let i = 0; i < size; i++) dst.w[o + i] = Math.round(src.w[o + i] / s);
-        }
+    for (let k = 0; k < t.n; k++) {
+        const size = Math.pow(NTuple.V, t.len[k]);
+        const o = t.wbase[k];
+        let mx = 0;
+        for (let i = 0; i < size; i++) { const v = Math.abs(src.w[o + i]); if (v > mx) mx = v; }
+        const s = mx > 0 ? mx / 32767 : 1;
+        dst.scale[k] = s;
+        for (let i = 0; i < size; i++) dst.w[o + i] = Math.round(src.w[o + i] / s);
     }
 
     // Check on the boards a real game produces, not on anything convenient.

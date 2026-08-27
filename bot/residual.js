@@ -2,7 +2,7 @@
 // ============================================================================
 // The value network's Bellman residual, broken down by move rank.
 //
-//   node bot/residual.js --weights bot/weights/dom21c.bin
+//   node bot/residual.js --weights bot/weights/all7g-Rcq.bin
 //   node bot/residual.js --weights bot/weights/w.bin --sub grid44 --games 40
 //
 // For an afterstate s the residual is
@@ -53,7 +53,7 @@ const NTuple = require('./ntuple.js');
 
 function parseArgs(argv) {
     const a = {
-        weights: 'bot/weights/dom21c.bin', games: 20, every: 5, ranks: 8,
+        weights: 'bot/weights/all7g-Rcq.bin', games: 20, every: 5, ranks: 8,
         sub: '', seedBase: 700000, cap: 64, agent: 'greedy',
         positions: null, sample: 400, bySixes: false
     };

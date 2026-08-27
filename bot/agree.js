@@ -2,7 +2,7 @@
 // ============================================================================
 // Does a candidate value function make the same moves as a reference one?
 //
-//   node bot/agree.js --corpus c.bin --ref bot/weights/dom39c.bin --cand small.bin
+//   node bot/agree.js --corpus c.bin --ref bot/weights/all7g-Rcq.bin --cand small.bin
 //
 // Over every decision in a corpus (see bot/corpus.js) both value functions pick
 // argmax_m (gain_m + V(afterstate_m)). Three numbers come out:
@@ -94,7 +94,7 @@ module.exports = { loadCorpus, scoreAll, compare, argmax };
 
 if (require.main === module) {
     const NT = require('./ntuple.js');
-    const a = { corpus: null, ref: 'bot/weights/dom39c.bin', cand: null };
+    const a = { corpus: null, ref: 'bot/weights/all7g-Rcq.bin', cand: null };
     for (let i = 2; i < process.argv.length; i++) {
         const k = process.argv[i];
         if (k === '--corpus') a.corpus = process.argv[++i];
