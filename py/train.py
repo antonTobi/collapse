@@ -95,32 +95,54 @@ def parse_args():
     return p.parse_args()
 
 
-def enable_interleave():
-    """Replicate `numactl --interleave=all` in-process (Linux, no package needed).
-    Sets MPOL_INTERLEAVE so subsequently-allocated pages -- above all the big shared
-    weight table every worker hammers -- spread evenly across NUMA nodes instead of
-    parking on the node that first touches them. On a dual-socket box that halves the
-    average remote-access penalty. Returns the node list on success, else None (single
-    node, non-Linux, or any failure -- always a silent no-op)."""
+_MPOL_DEFAULT = 0
+_MPOL_INTERLEAVE = 3
+
+
+def _numa_nodes():
+    import glob
+    return sorted(int(os.path.basename(p)[4:])
+                  for p in glob.glob('/sys/devices/system/node/node[0-9]*'))
+
+
+def _set_mempolicy(mode, nodes=None):
+    """Thin ctypes wrapper over the Linux set_mempolicy(2) syscall. Returns True on
+    success. INTERLEAVE needs the node list; DEFAULT restores first-touch placement."""
     if not sys.platform.startswith('linux'):
-        return None
+        return False
     try:
-        import ctypes, glob
-        nodes = sorted(int(os.path.basename(p)[4:])
-                       for p in glob.glob('/sys/devices/system/node/node[0-9]*'))
-        if len(nodes) < 2:
-            return None
-        ulbits = ctypes.sizeof(ctypes.c_ulong) * 8
-        nwords = (max(nodes) + ulbits) // ulbits          # room for the highest node id
-        mask = (ctypes.c_ulong * nwords)()
-        for nd in nodes:
-            mask[nd // ulbits] |= 1 << (nd % ulbits)
+        import ctypes
         libc = ctypes.CDLL('libc.so.6', use_errno=True)
-        MPOL_INTERLEAVE = 3
-        rc = libc.set_mempolicy(MPOL_INTERLEAVE, mask, ctypes.c_ulong(nwords * ulbits))
-        return nodes if rc == 0 else None
+        if mode == _MPOL_INTERLEAVE:
+            ulbits = ctypes.sizeof(ctypes.c_ulong) * 8
+            nwords = (max(nodes) + ulbits) // ulbits       # room for the highest node id
+            mask = (ctypes.c_ulong * nwords)()
+            for nd in nodes:
+                mask[nd // ulbits] |= 1 << (nd % ulbits)
+            rc = libc.set_mempolicy(mode, mask, ctypes.c_ulong(nwords * ulbits))
+        else:
+            rc = libc.set_mempolicy(mode, None, 0)
+        return rc == 0
     except Exception:
-        return None
+        return False
+
+
+def alloc_shared_weights(net, want_interleave):
+    """Return the one float32 weight table every worker hammers, placed for NUMA.
+
+    On a multi-socket box the table otherwise parks on whichever node first touched
+    it, so half the workers pay remote-access latency AND all table bandwidth hits a
+    single memory controller. We interleave *only this array* across nodes (both
+    controllers, symmetric latency) via a fresh faulted-under-MPOL_INTERLEAVE copy,
+    then immediately restore MPOL_DEFAULT so each worker's thread-private scratch
+    stays node-local (first-touch). Returns (w, nodes-or-None)."""
+    if want_interleave and sys.platform.startswith('linux'):
+        nodes = _numa_nodes()
+        if len(nodes) >= 2 and _set_mempolicy(_MPOL_INTERLEAVE, nodes):
+            w = np.ascontiguousarray(net.w, np.float32).copy()  # faults every page interleaved
+            _set_mempolicy(_MPOL_DEFAULT)                       # scratch → node-local again
+            return w, nodes
+    return np.ascontiguousarray(net.w, np.float32), None
 
 
 def run_bench(a, w, off, ln, wbase, tcells, tmcells, n, sym, nc, ns, pool, pool_n):
@@ -178,12 +200,6 @@ def main():
     except Exception:
         pass
 
-    if a.interleave:
-        nodes = enable_interleave()
-        if nodes:
-            print('NUMA interleave on across nodes %s (shared weight table spread evenly)'
-                  % nodes)
-
     if a.resume:
         net = nt.load(a.resume)
         if a.sym and not net.sym:
@@ -210,7 +226,7 @@ def main():
     tmcells = np.ascontiguousarray(t.mcells, np.int64)
     n, sym = t.n, net.sym
     nc, ns = net.need_chain, net.need_surf
-    w = np.ascontiguousarray(net.w, np.float32)   # THE shared table
+    w, il_nodes = alloc_shared_weights(net, a.interleave)   # THE shared table
     net.w = w
 
     pool = load_starts(a.starts) if a.starts else None
@@ -221,6 +237,9 @@ def main():
         ('  freeze-prefix=%s (%d tuples)' % (a.freeze_prefix, train_from)) if train_from else '',
         '  freeze-root' if a.freeze_root else '',
         ('  starts=%d (%.0f%%)' % (pool_n, 100 * a.start_frac)) if pool_n else ''))
+    if il_nodes:
+        print('NUMA: shared weight table interleaved across nodes %s, worker scratch node-local'
+              % il_nodes)
 
     def alpha_at(frac):
         if a.alpha_end > 0:
