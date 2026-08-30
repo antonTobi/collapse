@@ -43,6 +43,28 @@ should match physical cores; Hogwild scales near-linearly. The run resumes from
 any checkpoint with `--resume <checkpoint.bin>` (architecture is read from the
 file; `--freeze-prefix` still needs naming).
 
+### NUMA (multi-socket boxes)
+
+`value()` is a scatter-gather over a multi-MB shared weight table, so it's
+memory-latency-bound. On a dual-socket box the table otherwise parks on one
+node and half the workers pay remote-access latency (~1.6x slower per core here).
+The trainer spreads the table across nodes by default — the in-process
+equivalent of `numactl --interleave=all`, needing no package or admin. Disable
+with `--no-interleave`. It's a silent no-op on single-node or non-Linux hosts.
+
+### Finding the jobs knee (`--bench`)
+
+Probe throughput without committing to a long run: `--bench` runs real episodes
+at several `--jobs` values for a few seconds each and prints ep/s, then exits
+(no checkpoint written). Use it to pick `--jobs` and confirm interleave helps.
+
+```bash
+python3 py/train.py --resume bot/weights/all7h-seed.bin --sym --freeze-root \
+    --starts bot/data/mut-starts.bin --start-frac 0.5 --bench          # auto: ¼,½,all cores
+python3 py/train.py --resume bot/weights/all7h-seed.bin --sym \
+    --starts bot/data/mut-starts.bin --bench 7,14,28 --bench-secs 20   # explicit sweep
+```
+
 ## Key flags
 
 | flag | meaning |

@@ -82,7 +82,93 @@ def parse_args():
     p.add_argument('--checkpoint-dir', dest='checkpoint_dir')
     p.add_argument('--out', default='bot/weights/ptd-py.bin')
     p.add_argument('--seed-base', dest='seed_base', type=int, default=2000000)
+    p.add_argument('--interleave', dest='interleave', action='store_true', default=True,
+                   help='spread the shared weight table across NUMA nodes (default on; '
+                        'in-process equivalent of `numactl --interleave=all`)')
+    p.add_argument('--no-interleave', dest='interleave', action='store_false')
+    p.add_argument('--bench', nargs='?', const='auto', default=None,
+                   help='benchmark throughput at several --jobs values and exit, instead '
+                        'of training. Optional comma list, e.g. --bench 7,14,28 (default: '
+                        'auto = quarter/half/all of os.cpu_count()).')
+    p.add_argument('--bench-secs', dest='bench_secs', type=float, default=15.0,
+                   help='measurement window per --jobs value in --bench mode')
     return p.parse_args()
+
+
+def enable_interleave():
+    """Replicate `numactl --interleave=all` in-process (Linux, no package needed).
+    Sets MPOL_INTERLEAVE so subsequently-allocated pages -- above all the big shared
+    weight table every worker hammers -- spread evenly across NUMA nodes instead of
+    parking on the node that first touches them. On a dual-socket box that halves the
+    average remote-access penalty. Returns the node list on success, else None (single
+    node, non-Linux, or any failure -- always a silent no-op)."""
+    if not sys.platform.startswith('linux'):
+        return None
+    try:
+        import ctypes, glob
+        nodes = sorted(int(os.path.basename(p)[4:])
+                       for p in glob.glob('/sys/devices/system/node/node[0-9]*'))
+        if len(nodes) < 2:
+            return None
+        ulbits = ctypes.sizeof(ctypes.c_ulong) * 8
+        nwords = (max(nodes) + ulbits) // ulbits          # room for the highest node id
+        mask = (ctypes.c_ulong * nwords)()
+        for nd in nodes:
+            mask[nd // ulbits] |= 1 << (nd % ulbits)
+        libc = ctypes.CDLL('libc.so.6', use_errno=True)
+        MPOL_INTERLEAVE = 3
+        rc = libc.set_mempolicy(MPOL_INTERLEAVE, mask, ctypes.c_ulong(nwords * ulbits))
+        return nodes if rc == 0 else None
+    except Exception:
+        return None
+
+
+def run_bench(a, w, off, ln, wbase, tcells, tmcells, n, sym, nc, ns, pool, pool_n):
+    """Throughput probe: for each --jobs value, run real episodes for a fixed window
+    and print steady-state ep/s, then exit. No checkpoint/save. Finds the NUMA/HT knee
+    without a wasted long run. The JIT is already warmed by the caller."""
+    ncpu = os.cpu_count() or a.jobs
+    if a.bench == 'auto':
+        jobs_list = sorted({max(1, ncpu // 4), max(1, ncpu // 2), ncpu})
+    else:
+        jobs_list = [int(x) for x in a.bench.split(',') if x.strip()]
+    warmup = 4.0
+    dummy = np.zeros(25, np.uint8)
+    print('bench: %.0fs window per setting (after %.0fs warmup), jobs=%s'
+          % (a.bench_secs, warmup, jobs_list))
+    for J in jobs_list:
+        stop = threading.Event()
+        lock = threading.Lock()
+        cnt = {'n': 0}
+
+        def worker(tid):
+            rng = np.random.default_rng(424242 + tid)
+            k = 0
+            while not stop.is_set():
+                seeded = pool_n > 0 and rng.random() < a.start_frac
+                start = np.ascontiguousarray(pool[rng.integers(pool_n)], np.uint8) if seeded else dummy
+                fc.run_episode(seeded, start, a.seed_base + tid * 1000000 + k, w, off, ln,
+                               wbase, tcells, tmcells, n, sym, nc, ns, a.freeze_root,
+                               0, a.alpha, a.max_moves, a.start_moves)
+                k += 1
+                with lock:
+                    cnt['n'] += 1
+
+        threads = [threading.Thread(target=worker, args=(k,), daemon=True) for k in range(J)]
+        for th in threads:
+            th.start()
+        time.sleep(warmup)
+        with lock:
+            base = cnt['n']
+        t0 = time.time()
+        time.sleep(a.bench_secs)
+        with lock:
+            got = cnt['n'] - base
+        el = time.time() - t0
+        stop.set()
+        for th in threads:
+            th.join()
+        print('  jobs %3d  %6.0f ep/s  (%5.1f ep/s/job)' % (J, got / el, got / el / J))
 
 
 def main():
@@ -91,6 +177,12 @@ def main():
         sys.stdout.reconfigure(line_buffering=True)   # live progress when redirected
     except Exception:
         pass
+
+    if a.interleave:
+        nodes = enable_interleave()
+        if nodes:
+            print('NUMA interleave on across nodes %s (shared weight table spread evenly)'
+                  % nodes)
 
     if a.resume:
         net = nt.load(a.resume)
@@ -138,6 +230,10 @@ def main():
     # Warm up the JIT once (single thread) so workers don't all compile at once.
     fc.run_episode(False, np.zeros(25, np.uint8), 1, w.copy(), off, ln, wbase, tcells, tmcells,
                    n, sym, nc, ns, a.freeze_root, train_from, 0.0, 50, 0)
+
+    if a.bench is not None:
+        run_bench(a, w, off, ln, wbase, tcells, tmcells, n, sym, nc, ns, pool, pool_n)
+        return
 
     lock = threading.Lock()
     state = {'next': 0, 'done': 0, 'seeded': 0, 'recent': [], 'sum': 0.0}
