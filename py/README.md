@@ -38,6 +38,19 @@ python3 py/train.py \
 For a full fine-tune instead (all weights co-adapt), drop `--freeze-prefix` and
 raise the rate, e.g. `--alpha 0.03 --alpha-end 0.005`.
 
+### Exploration (`--temp`)
+
+To fight the peak-then-decline over-specialization (the value net narrows to its
+own greedy on-policy distribution as it strengthens), `--temp` plays a
+**Boltzmann-sampled** move instead of always greedy — value-weighted, so it
+explores among plausible moves and rarely picks catastrophic ones. Crucially the
+**TD target stays greedy** (bootstraps from the max), so `V` still learns the
+value of strong play while being trained over a broader state distribution — the
+states search actually visits at deploy time. `temp` is in points; anneal it to 0
+alongside alpha, e.g. `--temp 40 --temp-end 0`. Note: with `temp>0` the live
+`mean` reflects *exploratory* play and reads low — judge strength by evaluating
+checkpoints at greedy/search (temp is training-only), not by the training mean.
+
 Put checkpoints and the output on `/LocalData` (the big local disk). `--jobs`
 should match physical cores; Hogwild scales near-linearly. The run resumes from
 any checkpoint with `--resume <checkpoint.bin>` (architecture is read from the
@@ -76,6 +89,7 @@ python3 py/train.py --resume bot/weights/all7h-seed.bin --sym \
 | `--freeze-root` | show provably-dead tiles to the net as 6s at each root |
 | `--starts FILE --start-frac F` | begin fraction F of episodes from a position pool |
 | `--alpha A --alpha-end B` | geometric anneal from A to B over the run |
+| `--temp T --temp-end E` | Boltzmann exploration temperature in points (0=greedy); anneal T→E (E=0 linear-decays to greedy, omit to hold) |
 | `--jobs N` | Hogwild worker threads |
 | `--checkpoint-every N --checkpoint-dir D` | periodic checkpoints |
 

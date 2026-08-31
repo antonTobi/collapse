@@ -76,6 +76,13 @@ def parse_args():
     p.add_argument('--episodes', type=int, default=1000000)
     p.add_argument('--alpha', type=float, default=0.004)
     p.add_argument('--alpha-end', dest='alpha_end', type=float, default=0.0)
+    p.add_argument('--temp', type=float, default=0.0,
+                   help='Boltzmann exploration temperature in points (0 = greedy). '
+                        'Plays a value-weighted random move while keeping the TD target '
+                        'greedy, broadening the trained state distribution.')
+    p.add_argument('--temp-end', dest='temp_end', type=float, default=-1.0,
+                   help='anneal --temp geometrically to this by end of run (default: '
+                        'hold --temp constant). Set 0 to decay toward greedy.')
     p.add_argument('--max-moves', dest='max_moves', type=int, default=20000)
     p.add_argument('--report', type=int, default=50000)
     p.add_argument('--checkpoint-every', dest='checkpoint_every', type=int, default=0)
@@ -171,7 +178,7 @@ def run_bench(a, w, off, ln, wbase, tcells, tmcells, n, sym, nc, ns, pool, pool_
                 start = np.ascontiguousarray(pool[rng.integers(pool_n)], np.uint8) if seeded else dummy
                 fc.run_episode(seeded, start, a.seed_base + tid * 1000000 + k, w, off, ln,
                                wbase, tcells, tmcells, n, sym, nc, ns, a.freeze_root,
-                               0, a.alpha, a.max_moves, a.start_moves)
+                               0, a.alpha, a.max_moves, a.start_moves, a.temp)
                 k += 1
                 with lock:
                     cnt['n'] += 1
@@ -240,15 +247,27 @@ def main():
     if il_nodes:
         print('NUMA: shared weight table interleaved across nodes %s, worker scratch node-local'
               % il_nodes)
+    if a.temp > 0:
+        print('softmax exploration: temp %.1f%s (greedy TD target preserved)'
+              % (a.temp, '' if a.temp_end < 0 else ' -> %.1f' % a.temp_end))
 
     def alpha_at(frac):
         if a.alpha_end > 0:
             return a.alpha * (a.alpha_end / a.alpha) ** frac
         return a.alpha
 
+    def temp_at(frac):
+        if a.temp <= 0:
+            return 0.0
+        if a.temp_end < 0:
+            return a.temp                                   # hold constant
+        if a.temp_end == 0:
+            return a.temp * (1.0 - frac)                    # linear decay to greedy
+        return a.temp * (a.temp_end / a.temp) ** frac       # geometric anneal
+
     # Warm up the JIT once (single thread) so workers don't all compile at once.
     fc.run_episode(False, np.zeros(25, np.uint8), 1, w.copy(), off, ln, wbase, tcells, tmcells,
-                   n, sym, nc, ns, a.freeze_root, train_from, 0.0, 50, 0)
+                   n, sym, nc, ns, a.freeze_root, train_from, 0.0, 50, 0, 0.0)
 
     if a.bench is not None:
         run_bench(a, w, off, ln, wbase, tcells, tmcells, n, sym, nc, ns, pool, pool_n)
@@ -272,10 +291,12 @@ def main():
                 start = np.ascontiguousarray(pool[rng.integers(pool_n)], np.uint8)
             else:
                 start = dummy
-            alpha = alpha_at(ep / a.episodes)
+            frac = ep / a.episodes
+            alpha = alpha_at(frac)
             score, _ = fc.run_episode(seeded, start, a.seed_base + ep, w, off, ln, wbase,
                                       tcells, tmcells, n, sym, nc, ns, a.freeze_root,
-                                      train_from, alpha, a.max_moves, a.start_moves)
+                                      train_from, alpha, a.max_moves, a.start_moves,
+                                      temp_at(frac))
             with lock:
                 state['done'] += 1
                 if seeded:

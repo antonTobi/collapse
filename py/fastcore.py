@@ -11,6 +11,8 @@ If numba is unavailable, importing this module raises; train.py falls back to a
 numpy path with a warning.
 """
 
+import math
+
 import numpy as np
 from numba import njit
 
@@ -331,11 +333,104 @@ def _best_move(work, w, off, ln, wbase, tcells, tmcells, n, sym, need_chain, nee
 
 
 @njit(cache=True, nogil=True)
+def _select_move(work, w, off, ln, wbase, tcells, tmcells, n, sym, need_chain, need_surf,
+                 feat, seen, stamp, stack, chain, after_buf, out_after,
+                 cand_v, cand_k, cand_gain, cand_after, temp, rng):
+    """Scan canonical moves of `work`, scoring each by total value gain+V(afterstate).
+    Writes the *behaviour* move's afterstate into out_after and returns
+    (behaviour_k, behaviour_gain, greedy_max, rng).
+
+      greedy_max  = max total value over candidates. This is the OFF-POLICY TD
+                    target -- it bootstraps from best play regardless of which move
+                    we actually take, so exploration never biases what V learns.
+      behaviour   = argmax when temp<=0 (identical to _best_move, same first-wins
+                    tie-break), else a Boltzmann sample over total values with
+                    temperature `temp` (points). Only the PLAYED move changes; the
+                    target stays greedy, so V still learns the value of strong play
+                    while being trained across a broader state distribution.
+
+    rng is advanced only when it actually samples (temp>0 and >1 candidate), so
+    temp<=0 reproduces the greedy tile stream byte-for-byte."""
+    for x in range(BOARD):
+        stamp[x] = 0
+    sid = 0
+    nc = 0
+    best_v = -1e30
+    for i in range(W):
+        for j in range(H):
+            k = i * H + j
+            nn = work[k]
+            if nn < 1 or nn > 5:
+                continue
+            if not (j == 0 or work[k - 1] != work[k]):
+                continue
+            sid += 1
+            lnc = _chain_at(work, k, stamp, stack, chain, sid)
+            if lnc < 2:
+                continue
+            for x in range(BOARD):
+                after_buf[x] = work[x]
+            for t in range(lnc):
+                after_buf[chain[t]] = 0
+            after_buf[k] = nn + 1
+            for ci in range(W):
+                base = ci * H
+                wr = base
+                for jj in range(H):
+                    vv = after_buf[base + jj]
+                    if vv != 0:
+                        after_buf[wr] = vv
+                        wr += 1
+                for wp in range(wr, base + H):
+                    after_buf[wp] = 0
+            prepare(after_buf, feat, need_chain, need_surf, seen)
+            tv = value(feat, w, off, ln, wbase, tcells, tmcells, n, sym) + nn * lnc
+            cand_k[nc] = k
+            cand_gain[nc] = nn * lnc
+            cand_v[nc] = tv
+            for x in range(BOARD):
+                cand_after[nc, x] = after_buf[x]
+            if tv > best_v:
+                best_v = tv
+            nc += 1
+    if nc == 0:
+        return -1, 0, 0.0, rng
+    if temp <= 0.0 or nc == 1:
+        bi = 0                                  # argmax, first-wins (matches _best_move)
+        bv = cand_v[0]
+        for c in range(1, nc):
+            if cand_v[c] > bv:
+                bv = cand_v[c]
+                bi = c
+    else:
+        s = 0.0                                 # Boltzmann over (v - best_v)/temp
+        for c in range(nc):
+            s += math.exp((cand_v[c] - best_v) / temp)
+        rng = (rng * LCG_A + LCG_C) % M
+        u = (rng / M) * s
+        acc = 0.0
+        bi = nc - 1
+        for c in range(nc):
+            acc += math.exp((cand_v[c] - best_v) / temp)
+            if u <= acc:
+                bi = c
+                break
+    for x in range(BOARD):
+        out_after[x] = cand_after[bi, x]
+    return cand_k[bi], cand_gain[bi], best_v, rng
+
+
+@njit(cache=True, nogil=True)
 def run_episode(seeded, start_cells, seed, w, off, ln, wbase, tcells, tmcells, n, sym,
-                need_chain, need_surf, freeze_root, train_from, alpha, max_moves, start_moves):
+                need_chain, need_surf, freeze_root, train_from, alpha, max_moves, start_moves,
+                temp):
     """One TD(0) self-play episode, Hogwild-updating w in place. Returns
     (score, nmoves). Root-freeze applied to the board the net sees when
-    freeze_root; the live game advances on the unfrozen board."""
+    freeze_root; the live game advances on the unfrozen board.
+
+    temp>0 plays a Boltzmann-sampled move (exploration) while STILL bootstrapping
+    the TD target from the greedy max -- broadens the trained state distribution
+    without biasing V. temp<=0 is exact greedy (reproduces the old runs)."""
     live = np.zeros(BOARD, np.uint8)
     work = np.empty(BOARD, np.uint8)
     frozen_buf = np.empty(BOARD, np.uint8)
@@ -346,8 +441,12 @@ def run_episode(seeded, start_cells, seed, w, off, ln, wbase, tcells, tmcells, n
     stack = np.empty(BOARD, np.int64)
     chain = np.empty(BOARD, np.int64)
     after_buf = np.empty(BOARD, np.uint8)
-    best_after = np.empty(BOARD, np.uint8)
+    samp_after = np.empty(BOARD, np.uint8)
     cur_after = np.empty(BOARD, np.uint8)
+    cand_v = np.empty(BOARD, np.float64)
+    cand_k = np.empty(BOARD, np.int64)
+    cand_gain = np.empty(BOARD, np.int64)
+    cand_after = np.empty((BOARD, BOARD), np.uint8)
 
     rng = seed % M
     if seeded:
@@ -369,13 +468,12 @@ def run_episode(seeded, start_cells, seed, w, off, ln, wbase, tcells, tmcells, n
     else:
         for x in range(BOARD):
             work[x] = live[x]
-    ck, cgain = _best_move(work, w, off, ln, wbase, tcells, tmcells, n, sym,
-                           need_chain, need_surf, feat, seen, stamp, stack, chain,
-                           after_buf, best_after)
+    ck, cgain, _gm, rng = _select_move(work, w, off, ln, wbase, tcells, tmcells, n, sym,
+                                       need_chain, need_surf, feat, seen, stamp, stack, chain,
+                                       after_buf, cur_after, cand_v, cand_k, cand_gain,
+                                       cand_after, temp, rng)
     if ck < 0:
         return 0, 0
-    for x in range(BOARD):
-        cur_after[x] = best_after[x]
 
     score = 0
     nmoves = 0
@@ -389,14 +487,13 @@ def run_episode(seeded, start_cells, seed, w, off, ln, wbase, tcells, tmcells, n
         else:
             for x in range(BOARD):
                 work[x] = live[x]
-        nk, ngain = _best_move(work, w, off, ln, wbase, tcells, tmcells, n, sym,
-                               need_chain, need_surf, feat, seen, stamp, stack, chain,
-                               after_buf, best_after)
-        if nk < 0:
-            target = 0.0
-        else:
-            prepare(best_after, feat, need_chain, need_surf, seen)
-            target = value(feat, w, off, ln, wbase, tcells, tmcells, n, sym) + ngain
+        # greedy_max (gmax) is the off-policy TD target; nk/samp_after is the
+        # behaviour move actually played next (softmax when temp>0, else argmax).
+        nk, ngain, gmax, rng = _select_move(work, w, off, ln, wbase, tcells, tmcells, n, sym,
+                                            need_chain, need_surf, feat, seen, stamp, stack,
+                                            chain, after_buf, samp_after, cand_v, cand_k,
+                                            cand_gain, cand_after, temp, rng)
+        target = 0.0 if nk < 0 else gmax
 
         prepare(cur_after, cfeat, need_chain, need_surf, seen)
         val = value(cfeat, w, off, ln, wbase, tcells, tmcells, n, sym)
@@ -406,7 +503,7 @@ def run_episode(seeded, start_cells, seed, w, off, ln, wbase, tcells, tmcells, n
         if nk < 0:
             break
         for x in range(BOARD):
-            cur_after[x] = best_after[x]
+            cur_after[x] = samp_after[x]
         ck = nk
         cgain = ngain
     return score, nmoves

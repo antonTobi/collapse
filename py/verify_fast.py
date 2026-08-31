@@ -31,7 +31,7 @@ ok = True
 for seed in range(1, 11):
     w2 = w.copy()  # alpha=0 won't change it, but keep runs independent
     score, nm = fc.run_episode(False, dummy, seed, w2, off, ln, wbase, tcells, tmcells, n, sym,
-                               nc, ns, False, 0, 0.0, 100000, 0)
+                               nc, ns, False, 0, 0.0, 100000, 0, 0.0)
     exp = ref[seed]
     m = (score == exp[0] and nm == exp[1])
     ok = ok and m
