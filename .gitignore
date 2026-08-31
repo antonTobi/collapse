@@ -19,3 +19,10 @@ package-lock.json
 .DS_Store
 Thumbs.db
 
+# Experiment weights: ignore new files under bot/weights, keep only the
+# production net. Uses `/*` (not `/`) so the exception can re-include a child.
+# Historical nets already committed stay tracked; this only stops scratch
+# checkpoints, intermediates and losing candidates from piling up as untracked.
+bot/weights/*
+!bot/weights/anneal14-Rcq.bin
+
