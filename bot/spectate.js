@@ -239,7 +239,7 @@
     // bot move-gap error stays flat. Those extra disagreements are near-ties
     // worth nothing; a disagreement count is the misleading statistic here and
     // the magnitude is the real one, which is the same lesson as in agree.js.
-    const REVIEW_WEIGHTS = 'bot/weights/all7g-Rcq.bin';
+    const REVIEW_WEIGHTS = 'bot/weights/anneal14-Rcq.bin';
     // The review runs in two passes, because the cost of a pass is dominated by
     // `cap` -- the number of sampled refills at a chance node -- and the two
     // things the review has to do want very different amounts of it.
@@ -273,8 +273,12 @@
     // Depth 2 throughout: depth 3 at full root width is 185 ms per position,
     // 22x the cap-64 cost, and moved the measured total by only 7% when it was
     // tried (23 380 -> 21 643) without changing which positions came out on top.
-    const SCAN_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=2,topk=0,rootk=0,crn=1';
-    const FINE_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=64,topk=0,rootk=0,crn=1';
+    // freeze=1: the deployed net is trained freeze-root and must be run that way.
+    // FINE_SPEC also gets esc=6 (deeper on 6-making moves, +170 over plain d2) --
+    // it is the strong play config where quality matters and speed does not. The
+    // coarse SCAN pass stays cheap on purpose, so it keeps plain d2.
+    const SCAN_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=2,topk=0,rootk=0,crn=1,freeze=1';
+    const FINE_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=64,topk=0,rootk=0,crn=1,freeze=1,esc=6';
     const SHORTLIST = 40;
     // Kept after a review so that render() can re-score the position on screen.
     let fineReviewer = null;

@@ -2,14 +2,18 @@
 
 Headless implementation of the game plus a place to develop and benchmark agents.
 
-> **Current deployed net:** `weights/all7g-Rcq.bin` — a **single-bank** n-tuple network
+> **Current deployed net:** `weights/anneal14-Rcq.bin` — a **single-bank** n-tuple network
 > whose global board state enters through **virtual-cell features** (hole/5/6 counts,
 > exposed-6s, legal-move mobility, per-column heights) rather than weight banks, deployed
-> via reduce → compact → quantize (4.85 MB int16). It replaced the 21/39-bank
-> `dom21`/`dom39` family, which conditioned on state by splitting the weights into
-> 6-count banks. Sections below that discuss weight banks, sparse `.bins` storage, or the
-> `dom*`/`big*` nets describe that **retired** architecture and are kept as a research
-> record (see SCALING.md / ANALYSIS.md).
+> via reduce → compact → quantize (5.2 MB int16). It is the `all7h` tuple set
+> (max-chain + surface-height + height/surface-pair features on top of the `all7g`
+> globals), trained freeze-root then given a short low-alpha anneal, and it is
+> **freeze-dependent**: always run it with `freeze=1` (it is trained with `--freeze-root`
+> and plays materially worse without it — every deployed spec here passes `freeze=1`).
+> It replaced the freeze-independent `all7g-Rcq.bin`, which in turn replaced the 21/39-bank
+> `dom21`/`dom39` family. Sections below that discuss weight banks, sparse `.bins` storage,
+> or the `dom*`/`big*` nets describe that **retired** architecture and are kept as a
+> research record (see SCALING.md / ANALYSIS.md).
 
 | file | what it is |
 | --- | --- |
@@ -54,17 +58,27 @@ Everything that learns from human play goes through one loader:
 ## Where this stands
 
 The best agent is expectimax over an n-tuple value network. The current deployed
-net is `all7g-Rcq.bin` (single-bank, virtual-cell globals):
+net is `anneal14-Rcq.bin` (single-bank, virtual-cell globals, freeze-dependent —
+run it with `freeze=1`), played with `esc=6` (re-search one ply deeper when the
+best move makes a 6):
 
 ```bash
-node bot/run.js --agents "fx:weights=bot/weights/all7g-Rcq.bin,depth=2,cap=16,rootk=6" --seeds 200 --jobs 10
+node bot/run.js --agents "fx:weights=bot/weights/anneal14-Rcq.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6" --seeds 200 --jobs 10
 ```
 
-**10 608 ± 100** at depth 2 over seeds 1-100 (greedy 8933). It beats the retired
-deployed net `dom39h` by +271 at depth 2 and by +566 on off-distribution
-(mutated) positions — where it is also far better calibrated (bias -1 vs +635) —
-while being single-bank and 3.4x smaller (4.85 MB vs 16.7 MB). A strong human
-averages around 7400.
+**~11 067 ± 59** at depth 2 with `esc=6` (plain d2 is 10 981 ± 51; `esc=6` adds
+**+170 ± 60** over ~400 seeds at ~2x per-move cost — a cost-matched `cap` increase
+ties it, so `esc` is the default). Greedy+freeze is 9308. It beats the previous
+deployed net `all7g-Rcq.bin` (run at its own best, freeze off) by **+193 ± 70** at
+plain depth 2 (114W-86L, paired, seeds 1-200). Quantization to int16 cost nothing
+(the float32 net measured 10 971 on the same seeds). A strong human averages
+around 7400.
+
+The earlier `all7g-Rcq.bin` reached **10 608 ± 100** at depth 2 over seeds 1-100
+(greedy 8933) and beat the retired banked net `dom39h` by +271 at depth 2 and by
++566 on off-distribution (mutated) positions — where it is also far better
+calibrated (bias -1 vs +635) — while being single-bank and 3.4x smaller (4.85 MB
+vs 16.7 MB).
 
 The **retired banked-era** ladder that reached the previous best (`dom39q`), on
 seeds 1-100 except the last row:
@@ -233,181 +247,6 @@ and the bank is only an offset, so **refining `--edges` costs no extra lookups
 per evaluation** while adding tuple shapes costs one each, on every leaf of every
 search.
 
-### There is no smaller n-tuple network to distil into
-
-Zeroing a shape family and benchmarking what is left ranks what the tuples
-carry:
-
-| family | tuples | share of table | cost when zeroed |
-| ------ | -----: | -------------: | ---------------: |
-| 2x3 blocks | 6 | 43% | -2865 +- 80 |
-| 3x2 blocks | 8 | 42% | -2624 +- 77 |
-| both block families | 14 | 85% | -3818 +- 67 |
-| plus shapes | 6 | 1% | -371 +- 74 |
-
-The expensive tuples are the ones carrying the function, so trimming the
-architecture to make evaluation cheaper has nothing cheap to trim. (The two
-block families sum to far more than they cost together, which is coarse coding
-working as intended: each partly covers for the other.) Distillation would have
-to be into a different function class entirely, not a smaller tuple set.
-
-### ...but 91% of the weights are never read
-
-The architecture cannot be trimmed. The *table* can, by a lot, and the reason is
-not that the weights are redundant in any structural sense -- it is that almost
-none of them are ever looked at.
-
-Counting reads per (bank, entry) slot over 178M afterstates of real play
-(`shrink.js`, or `--save-counts` and reuse):
-
-| | |
-| --- | ---: |
-| slots in `dom39c` | 73.4M |
-| exactly zero (never touched in training) | 16.7% |
-| ever read in 178M afterstates of play | 12.1M (16.5%) |
-| slots holding half of all reads | 203k (0.28%) |
-| slots holding 80% of all reads | 1.14M (1.6%) |
-| distinct entries read, ignoring the bank | 544k of 1.88M |
-| banks a read entry appears in, on average | 12.5 of 39 |
-
-And the 39 banks are near-copies of each other: correlation 0.91-1.00 over the
-entries they share, 0.99-1.00 between any two of banks 18-38. So write each
-weight as a bank-independent `base[e]` -- the read-weighted mean across banks --
-plus a correction `corr[s][e]`. The base carries an rms of 217, the correction
-26. Keep the corrections that earn their place, ranked by `reads x correction^2`,
-and let everything else read the base:
-
-| kept corrections | file | vs f32 / int16 | regret | greedy, 300 seeds | depth 2, 400 seeds |
-| ---------------: | ---: | -------------: | -----: | ----------------: | -----------------: |
-| all 73.4M (`dom39c`) | 294 MB f32, 147 MB int16 | 1x | 0 | 8949 | 10251 |
-| 12.1M (everything read) | 20.3 MB | 14.4x / 7.2x | 0.14 | | |
-| **8.0M** (`dom39s.bins`) | **16.8 MB** | **17.5x / 8.8x** | **0.14** | **-0 +- 90** | **-57 +- 62** |
-| 4.0M | 11.1 MB | 26.4x / 13.2x | 0.36 | -107 +- 99 | -91 +- 66 |
-| 2.0M | 8.0 MB | 36.8x / 18.4x | 1.62 | | |
-| 1.0M | 6.3 MB | 46.6x / 23.3x | 4.13 | | |
-
-`regret` is `bot/agree.js`: the mean shortfall, measured by the *reference* value
-function, of the move the candidate picks over 85k real decisions. It is the
-number to watch, not the agreement percentage -- the median gap between a
-position's best and second-best move is 11 points of V, so a perturbation of a
-few points flips a great many decisions that were worth nothing. For scale,
-`dom21q` scores 0.44 and plays -85 +- 123; `bigxr-s7` scores 1.90 and plays
--200 +- 101; `big-td` scores 15.1 and plays -1040.
-
-Those are real files: `shrink.js` writes a `CNTS` sparse network, and every
-agent reads it through the same `net.value(cells)` -- `td:weights=...bins` just
-works. The 16.8 MB splits as 3.8 MB of base, 8.2 MB of corrections and 4.8 MB of
-index; recording *which* 8M of the 73.4M slots carry a correction costs more
-than half what the corrections themselves do, which is why the index is where
-the format's design went. It is a bitmap over entries with a rank word per 32 of
-them (one popcount to locate an entry), two words per carrying entry saying
-which of the 39 banks it carries and where its values start, and then that
-entry's base value with its correction bytes immediately after it, so one cache
-line serves both. The entries that carry nothing are stored at `e - rank(e)`,
-which the same popcount already produced, and cost no index at all.
-
-The evaluation is 1.5-1.8x slower than the dense int16 table, depending on how
-wide the working set is. That is not a cache effect and cannot be tuned away: a
-dense read is one load and an indexed one is at least two, and the dense table's
-hot set is small enough to cache anyway -- 0.3% of its slots carry half the
-reads. Putting base and corrections in the same line was worth 1.25 us per
-board and got it from 1.8x to 1.5x on the narrow benchmark; there is no similar
-trick left. What the format buys is the 8.8x, which is the whole point if the
-network has to be downloaded or held in memory rather than merely read fast.
-
-**Coverage is the whole result.** The same 4M-correction budget selected from a
-10M-board read count plays **-440 +- 93**; selected from a 178M-board count,
-**-107 +- 99**. Nothing about which slots were kept changed -- only how many
-slots the counting pass had ever seen. At 10M boards, 9.4% of afterstates in
-fresh play contain a slot the count table never saw, which then falls back to
-`base` and takes an error of ~26 into a decision whose median margin is 11. At
-178M boards, 0.24% do. This is the entire difference between "8x smaller and
-unusable" and "8x smaller and unmeasurably different", so count far more play
-than seems necessary; it is cheap.
-
-### Five ways of shrinking it that did not work
-
-Each of these was fitted by least-squares distillation against the full network
-(an n-tuple net is linear in its weights, so matching one is a convex regression
-over afterstates, not a search) and measured the same way.
-
-| idea | size | regret | why not |
-| ---- | ---: | -----: | ------- |
-| merge the 39 banks by rank-R SVD | 4.9x at R=8 | 4.01 | 97.4% of the energy is in the first component, but what decides moves is the per-entry idiosyncratic part, which is not low-rank |
-| merge the banks 39 -> 13 (drop the 5-group split), refit | 3.0x | 1.67 | fine on its own, strictly worse than pruning at equal size |
-| hash (bank, entry) into 4M slots + a dense base, refit | 12x | 4.80 | trains to the same rmse as the 13-bank merge and plays far worse: collision noise is independent across the moves in a position, so all of it lands on decisions |
-| tie tuples that are translates of each other | 2.0x | 14.3 | see below |
-| drop the 3x2 blocks and plus shapes, refit | 2.2x | 8.19 | confirms the table above: the block families really are carrying the function |
-
-The tying result is worth its own line, because "the same pattern in different
-places of the board should mean the same thing" is the natural guess and it is
-false. Horizontal translates do correlate (0.83-0.97) and vertical ones mostly
-do not (0.12-0.98, and 0.03 between the floor row and the top row) -- gravity and
-the floor make height a real coordinate, not a symmetry. Even where the
-correlation is high the residual is not small: forcing the two 2x3 blocks at
-`i=0,1` and `i=1,2` to share a table costs an rms of 59 against a decision margin
-of 11. Only the tuples that carry almost nothing anyway (the plus shapes, most of
-the 3x2 blocks) are cheap to tie.
-
-Sub-byte quantisation by round-to-nearest is also a dead end -- int16 is free
-(regret 0.00), int8 costs 1.18, int6 costs 8.48 -- but int8 *on the correction*,
-with the base kept at int16, costs about 0.1, because the correction is 8x smaller
-than what it corrects.
-
-### Chasing a record, and whether the PRNG can be trusted
-
-With unlimited attempts and a target to clear, the figure of merit is not mean
-score but *expected compute per success*: seconds per game divided by the
-probability of clearing the bar. Measured over 6550 games on fresh seeds
-(300000+):
-
-| config | n | mean | sd | max | cpu-s/game | P(>12k) | cpu-s per 12k game |
-| ------ | -: | ---: | -: | --: | ---------: | ------: | -----------------: |
-| depth 2 `cap=8` | 4000 | 10166 | 918 | 12104 | 0.71 | 0.10% | 710 |
-| depth 2 `cap=16` | 2000 | 10368 | 893 | 12430 | 1.24 | 0.30% | **415** |
-| depth 3 `cap=16 capDeep=2` | 400 | 10642 | 860 | 12696 | 11.62 | 1.00% | 1162 |
-| depth 3 `cap=64 capDeep=4` | 150 | 10837 | 692 | 12319 | 64.16 | 3.33% | 1925 |
-
-The curve is U-shaped and the optimum is in the middle. Depth 3 triples the hit
-rate and costs 9 to 50 times more per game, so it loses badly; the cheapest
-config wins games fast but too rarely. With 4 to 6 successes per row the Poisson
-error is 40-50%, so the top two rows are within noise of each other -- but depth
-2 beating depth 3 is not.
-
-Two things are worth knowing before optimising for a record.
-
-**Variance is an asset here, and mean score is the wrong target.** The strongest
-agent by mean (`cap=64`, 10837) has the *smallest* spread (sd 692) and produced
-no game over 12500 in 150 tries, while a weaker, noisier agent set the study's
-high score of 12696. Training and tuning push toward consistency, which is
-exactly backwards for the tail.
-
-**The right tail is much thinner than a normal.** A normal fitted to the
-`cap=8` row predicts P(>12k) = 1.15%; the measured value is 0.10%, eleven times
-lower. Do not extrapolate this distribution with a Gaussian -- the left tail is
-heavy (games collapse early) and the right tail is compressed, as if there were
-a ceiling on how well a game can go. Nothing in 4550 games cleared 12700, and
-extrapolating the observed decay (a factor of 4 to 14 per 500 points) puts a
-13000 game at several cpu-hours to a cpu-day of attempts.
-
-**The generator is not being exploited.** The engine uses the Numerical Recipes
-LCG and takes the *high* bits, which is the right half to take -- an LCG's low
-bits have period 2^(k+1). The residual worry is that a refill of h holes draws h
-consecutive values and consecutive LCG outputs lie on lattice hyperplanes, and
-the network was trained on LCG games. Running the same agent over the same 4000
-seeds with `COLLAPSE_RNG=hash`, a counter-based murmur3 stream with no
-recurrence at all, moves the score by **+11 +- 20**: nothing. The mechanism was
-never plausible -- the network's input is 25 cell values, so it has no channel
-to the generator -- but it is now measured rather than argued.
-
-One real artefact did turn up, and it is about benchmark design rather than the
-agents. Seeds s and s+1 start the LCG at states differing by A = 1664525, which
-is 0.04% of the range, so **adjacent seeds share their first tile 99.9% of the
-time** (and their fifth tile *never*, which is the lattice showing plainly).
-Games on consecutive seeds are therefore slightly less independent than they
-look, so quoted standard errors are a little optimistic. It affects every agent
-equally, so paired comparisons are unharmed.
-
 ### Watching a game
 
 `bot/record.js` saves a game as a seed plus a move list -- the refills come from
@@ -422,8 +261,10 @@ no per-move evaluations; pick the agent and seed directly if those are wanted.
 
 | file | size | what it is |
 | ---- | ---: | ---------- |
-| `all7g-Rcq.bin` | 4.85 MB | **the deployed net**: `mini5_all7g` trained 3M + 300k anneal, then reduce -> compact -> quantize (int16). Depth-2 10 608, greedy 8933. The spectator and the game-review page both open on it. |
-| `all7g-3M-anneal300k.bin` | 10 MB | the same net before the deploy transforms (float32), for retraining or analysis. |
+| `anneal14-Rcq.bin` | 5.2 MB | **the deployed net**: `mini5_all7h` full fine-tune (freeze-root, temp 0), best checkpoint ~1.4M, then a short low-alpha anneal (alpha 0.005->0.0005, 250k), then reduce -> compact -> quantize (int16). **Freeze-dependent -- run with `freeze=1`.** Depth-2 10 981, greedy+freeze 9308. The spectator and the game-review page both open on it (with `freeze=1`). |
+| `anneal14.bin` | 10 MB | the same net before the deploy transforms (float32), for retraining or analysis. |
+| `all7g-Rcq.bin` | 4.85 MB | the previous deployed net (freeze-independent): `mini5_all7g` trained 3M + 300k anneal, then reduce -> compact -> quantize (int16). Depth-2 10 608, greedy 8933. |
+| `all7g-3M-anneal300k.bin` | 10 MB | the `all7g` net before the deploy transforms (float32), for retraining or analysis. |
 | `mini5.bin` | 7 MB | the first single-bank virtual-globals net (`mini5r`: 5 globals, no legal/height features). Greedy 7598. |
 | `c_base.bin` | 0.3 MB | minimal control (`base`: 2x2 squares + 1x4 runs, no globals). Greedy 5735. |
 

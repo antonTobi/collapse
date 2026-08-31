@@ -16,11 +16,29 @@ const path = require('path');
 const Collapse = require('./engine.js');
 const { createAgent, agentNames } = require('./agents.js');
 
+// An agent entry may carry a display label as `label@spec` (e.g.
+// `d3-cvk8@fx:weights=...,depth=3,cvk=8`). The label is only for the output
+// tables; the spec after `@` is what actually builds the agent. A leading token
+// is treated as a label only when it looks like a plain name (no spec
+// punctuation), so a weights path that happens to contain `@` is left alone.
+function splitLabel(entry) {
+    const at = entry.indexOf('@');
+    if (at > 0) {
+        const label = entry.slice(0, at), spec = entry.slice(at + 1);
+        if (spec && !/[:=,@\\/]/.test(label)) return { spec, label };
+    }
+    return { spec: entry, label: entry };
+}
+
 function parseArgs(argv) {
-    const args = { agents: ['random', 'maxmoves'], seeds: 25, seedBase: 1, verbose: false, jobs: 1, json: false, dist: 0, sub: '' };
+    const args = { agents: ['random', 'maxmoves'], labels: ['random', 'maxmoves'], seeds: 25, seedBase: 1, verbose: false, jobs: 1, json: false, dist: 0, sub: '' };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '--agents') args.agents = argv[++i].split(/,(?![^:]*=)/).map(s => s.trim()).filter(Boolean);
+        if (a === '--agents') {
+            const parts = argv[++i].split(/,(?![^:]*=)/).map(s => s.trim()).filter(Boolean).map(splitLabel);
+            args.agents = parts.map(p => p.spec);
+            args.labels = parts.map(p => p.label);
+        }
         else if (a === '--seeds') args.seeds = parseInt(argv[++i], 10);
         else if (a === '--seed-base') args.seedBase = parseInt(argv[++i], 10);
         else if (a === '--jobs') args.jobs = parseInt(argv[++i], 10);
@@ -38,6 +56,7 @@ function parseArgs(argv) {
     }
     return args;
 }
+
 
 function stats(xs) {
     const sorted = [...xs].sort((p, q) => p - q);
@@ -92,41 +111,65 @@ function playSub(agent, seed, mode) {
     return { score: game.score, moves: game.moves.length, sixes: game.sixCount };
 }
 
-// Run one agent over a list of seeds. Returns [{seed, score, moves, sixes, ms}]
-function runAgent(spec, seeds, sub) {
-    return seeds.map(seed => {
-        const agent = createAgent(spec, { seed });
-        const t0 = process.hrtime.bigint();
-        const r = sub ? playSub(agent, seed, sub) : Collapse.playGame(agent, seed);
-        const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-        return { seed, score: r.score, moves: r.moves, sixes: r.sixes, ms };
-    });
+// Play one (agent, seed) game. Returns {seed, score, moves, sixes, ms}.
+function runOne(spec, seed, sub) {
+    const agent = createAgent(spec, { seed });
+    const t0 = process.hrtime.bigint();
+    const r = sub ? playSub(agent, seed, sub) : Collapse.playGame(agent, seed);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    return { seed, score: r.score, moves: r.moves, sixes: r.sixes, ms };
 }
 
 // --- worker mode -------------------------------------------------------------
+// A persistent worker: play one game per message, report it, wait for the next.
+// The parent hands out games one at a time (a work queue), so a slow agent's
+// games are load-balanced across all workers rather than piled on one.
 if (process.env.COLLAPSE_WORKER) {
-    process.on('message', ({ spec, seeds, sub }) => {
-        process.send(runAgent(spec, seeds, sub));
-        process.exit(0);
+    process.on('message', msg => {
+        if (!msg || msg.stop) { process.exit(0); }
+        const r = runOne(msg.spec, msg.seed, msg.sub);
+        process.send({ ai: msg.ai, r });
     });
     return;
 }
 
-function runAgentParallel(spec, seeds, jobs, sub) {
-    if (jobs <= 1) return Promise.resolve(runAgent(spec, seeds, sub));
-    const { fork } = require('child_process');
-    const chunks = Array.from({ length: jobs }, () => []);
-    seeds.forEach((s, k) => chunks[k % jobs].push(s));
-    return Promise.all(chunks.map(chunk => new Promise((resolve, reject) => {
-        if (!chunk.length) return resolve([]);
-        const child = fork(path.join(__dirname, 'run.js'), [], { env: Object.assign({}, process.env, { COLLAPSE_WORKER: '1' }) });
-        child.on('message', resolve);
-        child.on('error', reject);
-        child.send({ spec, seeds: chunk, sub });
-    }))).then(parts => {
-        const byseed = new Map();
-        parts.flat().forEach(r => byseed.set(r.seed, r));
-        return seeds.map(s => byseed.get(s));
+// Run every (agent, seed) game, interleaved by agent so all agents finish
+// together and completed-count tracks wall-clock. onResult(ai, r) fires per
+// finished game. Distributes over `jobs` workers as a dynamic queue (each free
+// worker pulls the next game), which also balances load across uneven agents.
+function runAll(agents, seeds, jobs, sub, onResult) {
+    // Interleaved queue: seed-major, agent-minor, so the first `agents.length`
+    // games are every agent on the first seed, and so on.
+    const tasks = [];
+    for (const seed of seeds)
+        for (let ai = 0; ai < agents.length; ai++) tasks.push({ ai, spec: agents[ai], seed, sub });
+
+    if (jobs <= 1) {
+        for (const t of tasks) onResult(t.ai, runOne(t.spec, t.seed, sub));
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+        const { fork } = require('child_process');
+        let next = 0, active = 0;
+        const dispatch = w => {
+            if (next >= tasks.length) { w.send({ stop: true }); return; }
+            const t = tasks[next++];
+            active++;
+            w.send({ ai: t.ai, spec: t.spec, seed: t.seed, sub });
+        };
+        const nWorkers = Math.min(jobs, tasks.length);
+        for (let i = 0; i < nWorkers; i++) {
+            const w = fork(path.join(__dirname, 'run.js'), [], { env: Object.assign({}, process.env, { COLLAPSE_WORKER: '1' }) });
+            w.on('message', ({ ai, r }) => {
+                active--;
+                onResult(ai, r);
+                if (next < tasks.length) dispatch(w);
+                else { w.send({ stop: true }); if (active === 0) resolve(); }
+            });
+            w.on('error', reject);
+            dispatch(w);
+        }
     });
 }
 
@@ -135,34 +178,57 @@ const pad = (s, n) => String(s).padStart(n);
 async function main() {
     const args = parseArgs(process.argv);
     const seeds = Array.from({ length: args.seeds }, (_, k) => args.seedBase + k);
-    const results = {};
+    const idx = new Map(seeds.map((s, i) => [s, i]));
+    // Indexed by agent position (not spec), so duplicate specs and labels never
+    // collide. results[ai][seedIdx] = one game's record.
+    const results = args.agents.map(() => new Array(seeds.length));
+    const labels = args.labels;
 
-    for (const spec of args.agents) {
-        results[spec] = await runAgentParallel(spec, seeds, args.jobs, args.sub);
-    }
+    // Per-agent running tally, and an interim table on stderr (so it never
+    // mingles with --json/piped stdout) roughly every 10% of the whole run.
+    const total = args.agents.length * seeds.length;
+    const tally = args.agents.map(() => ({ n: 0, sum: 0 }));
+    const nameWidth0 = Math.max(12, ...labels.map(a => Math.min(a.length, 44)));
+    let done = 0;
+    const step = Math.max(1, Math.floor(total / 10));
+    const printInterim = () => {
+        process.stderr.write(`\n  --- ${Math.round(100 * done / total)}% (${done}/${total} games) ---\n`);
+        labels.forEach((label, ai) => {
+            const t = tally[ai];
+            const nm = label.length > 44 ? label.slice(0, 43) + '…' : label;
+            process.stderr.write('  ' + nm.padEnd(nameWidth0) +
+                pad('n=' + t.n, 7) + pad(t.n ? (t.sum / t.n).toFixed(0) : '-', 9) + '\n');
+        });
+    };
+    const onResult = (ai, r) => {
+        results[ai][idx.get(r.seed)] = r;
+        tally[ai].n++; tally[ai].sum += r.score;
+        done++;
+        if (!args.json && (done % step === 0 || done === total)) printInterim();
+    };
+    await runAll(args.agents, seeds, args.jobs, args.sub, onResult);
 
     if (args.json) {
-        console.log(JSON.stringify(Object.fromEntries(args.agents.map(s =>
-            [s, { scores: results[s].map(r => r.score), mean: stats(results[s].map(r => r.score)).mean }])), null, 1));
+        console.log(JSON.stringify(Object.fromEntries(args.agents.map((spec, ai) =>
+            [labels[ai], { spec, scores: results[ai].map(r => r.score), mean: stats(results[ai].map(r => r.score)).mean }])), null, 1));
         return;
     }
 
     if (args.verbose) {
         console.log('\nPer-seed scores');
-        console.log('  seed  ' + args.agents.map(n => pad(n.slice(0, 22), 24)).join(''));
+        console.log('  seed  ' + labels.map(n => pad(n.slice(0, 22), 24)).join(''));
         seeds.forEach((seed, k) => {
-            console.log('  ' + pad(seed, 4) + '  ' + args.agents.map(n => pad(results[n][k].score, 24)).join(''));
+            console.log('  ' + pad(seed, 4) + '  ' + results.map(rs => pad(rs[k].score, 24)).join(''));
         });
     }
 
-    const nameWidth = Math.max(12, ...args.agents.map(a => a.length));
+    const nameWidth = Math.max(12, ...labels.map(a => a.length));
     console.log(`\n${args.seeds} games per agent (seeds ${seeds[0]}-${seeds[seeds.length - 1]})\n`);
     const distHead = args.dist ? pad('sd', 7) + pad('p10', 8) + pad('p90', 8) + pad('≥' + args.dist, 8) : '';
     console.log('  ' + 'agent'.padEnd(nameWidth) + pad('mean', 9) + pad('±se', 7) + pad('median', 9) +
         pad('min', 8) + pad('max', 8) + distHead + pad('moves', 8) + pad('6s', 6) + pad('ms/move', 10) + pad('s/game', 9));
     console.log('  ' + '-'.repeat(nameWidth + 74 + (args.dist ? 31 : 0)));
-    for (const spec of args.agents) {
-        const rs = results[spec];
+    results.forEach((rs, ai) => {
         const s = stats(rs.map(r => r.score));
         const moves = stats(rs.map(r => r.moves));
         const sixes = stats(rs.map(r => r.sixes));
@@ -171,20 +237,19 @@ async function main() {
         const distRow = args.dist
             ? pad(s.sd.toFixed(0), 7) + pad(s.p10, 8) + pad(s.p90, 8) + pad((100 * s.over(args.dist)).toFixed(0) + '%', 8)
             : '';
-        console.log('  ' + spec.padEnd(nameWidth) + pad(s.mean.toFixed(0), 9) + pad(s.se.toFixed(0), 7) +
+        console.log('  ' + labels[ai].padEnd(nameWidth) + pad(s.mean.toFixed(0), 9) + pad(s.se.toFixed(0), 7) +
             pad(s.median.toFixed(0), 9) + pad(s.min, 8) + pad(s.max, 8) + distRow +
             pad(moves.mean.toFixed(1), 8) + pad(sixes.mean.toFixed(1), 6) +
             pad((totalMs / totalMoves).toFixed(3), 10) + pad((totalMs / rs.length / 1000).toFixed(3), 9));
-    }
+    });
 
     if (args.agents.length >= 2) {
         console.log();
-        const base = args.agents[0];
-        for (const spec of args.agents.slice(1)) {
-            const diffs = seeds.map((_, k) => results[spec][k].score - results[base][k].score);
+        for (let ai = 1; ai < args.agents.length; ai++) {
+            const diffs = seeds.map((_, k) => results[ai][k].score - results[0][k].score);
             const d = stats(diffs);
             const wins = diffs.filter(x => x > 0).length, losses = diffs.filter(x => x < 0).length;
-            console.log(`  ${spec} vs ${base}: ${wins}W ${seeds.length - wins - losses}D ${losses}L, ` +
+            console.log(`  ${labels[ai]} vs ${labels[0]}: ${wins}W ${seeds.length - wins - losses}D ${losses}L, ` +
                 `mean diff ${d.mean >= 0 ? '+' : ''}${d.mean.toFixed(0)} ± ${d.se.toFixed(0)} (paired)`);
         }
     }

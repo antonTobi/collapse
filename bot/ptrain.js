@@ -39,6 +39,7 @@ const { Worker, isMainThread, parentPort, workerData } = require('worker_threads
 const Collapse = require('./engine.js');
 const NTuple = require('./ntuple.js');
 const Search = require('./search.js');
+const Freeze = require('./freeze.js');
 
 function isPrefix(small, big) {
     if (small.n > big.n) return false;
@@ -59,7 +60,8 @@ function parseArgs(argv) {
         lambdaEnd: -1, starts: null, startFrac: 0.5, startMoves: 0,
         checkpointEvery: 0, checkpointDir: null,
         siblings: 0, sibAlpha: 1, sibEvery: 1, sibCenter: false, explore: 0, exploreRank: 2,
-        distil: 0, frozen: null, rank: 0, rankK: 3, freezePrefix: null, trainFrom: 0
+        distil: 0, frozen: null, rank: 0, rankK: 3, freezePrefix: null, trainFrom: 0,
+        freezeRoot: false
     };
     for (let i = 2; i < argv.length; i++) {
         const k = argv[i];
@@ -103,6 +105,10 @@ function parseArgs(argv) {
         // appended correction tables first. This protects the known-strong
         // evaluator while the new features learn from deliberately OOD starts.
         else if (k === '--freeze-prefix') a.freezePrefix = argv[++i];
+        // Convert provably-dead tiles to 6s at each decision's root board (see
+        // bot/freeze.js). Root-only and behaviour-preserving, so it trains V on
+        // the same frozen-aware boards the fx agent plays with `freeze`.
+        else if (k === '--freeze-root') a.freezeRoot = true;
         // Train on a walled-off board. A 6 can never be collapsed, so a row and
         // a column of them is exactly a smaller game -- and the network reads
         // 6-heavy boards already, so no architecture change is needed. Games are
@@ -232,7 +238,18 @@ if (!isMainThread) {
         return n;
     }
 
+    // A frozen-aware view of the root: dead tiles shown as 6s. Behaviour-
+    // preserving (legal moves unchanged), recomputed per decision, so it matches
+    // how the fx agent freezes its own root at play time. Off unless --freeze-root.
+    function froze(game) {
+        if (!args.freezeRoot) return game;
+        const g = game.clone();
+        g.cells = Freeze.freezeBoard(game.cells);
+        return g;
+    }
+
     function best(game) {
+        game = froze(game);
         const nm = expander.expand(game.cells, game.maxGen);
         if (nm === 0) return null;
         let bs = 0;
@@ -411,7 +428,8 @@ if (!isMainThread) {
     }
 
     function bestMove(game) {
-        if (!searcher) return best(game);
+        if (!searcher) return best(game);        // best() freezes internally
+        game = froze(game);
         const scored = searcher.scoreMoves(game);
         if (!scored.length) return null;
         let bm = null, bv = -Infinity;

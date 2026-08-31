@@ -71,7 +71,28 @@
         HEIGHT1: BOARD_CELLS + 8,
         HEIGHT2: BOARD_CELLS + 9,
         HEIGHT3: BOARD_CELLS + 10,
-        HEIGHT4: BOARD_CELLS + 11
+        HEIGHT4: BOARD_CELLS + 11,
+        // Largest available collapse per tile value: the size of the biggest
+        // orthogonally-connected component of that value with >=2 cells (0 if
+        // none), bucketed 0,2+,4+,6+,8+,10+,12+ -> 0..6. On a FILL_NONE
+        // afterstate this is a lower bound on the post-refill chain (like LEGAL),
+        // and it is the one thing the earlier globals never captured: how big an
+        // opportunity the position holds, not just how many moves or how much
+        // danger. Whole-board scalars, so mirror-invariant.
+        MAXCHAIN1: BOARD_CELLS + 12,
+        MAXCHAIN2: BOARD_CELLS + 13,
+        MAXCHAIN3: BOARD_CELLS + 14,
+        MAXCHAIN4: BOARD_CELLS + 15,
+        MAXCHAIN5: BOARD_CELLS + 16,
+        // Per-column surface height: the topmost non-hole (0 = empty column),
+        // 0..5. The semi-local analogue of the 6-heights that won earlier, but
+        // for the whole stack -- on a compacted afterstate it is the column's
+        // fill after the collapse. Not mirror-invariant: SURFi <-> SURF(W-1-i).
+        SURF0: BOARD_CELLS + 17,
+        SURF1: BOARD_CELLS + 18,
+        SURF2: BOARD_CELLS + 19,
+        SURF3: BOARD_CELLS + 20,
+        SURF4: BOARD_CELLS + 21
     });
     const GLOBAL_NAMES = Object.freeze({
         [GLOBAL.ZEROES]: 'zeroes / pairs (13+ capped)',
@@ -85,7 +106,17 @@
         [GLOBAL.HEIGHT1]: 'height of highest 6 in column 1 (0..5)',
         [GLOBAL.HEIGHT2]: 'height of highest 6 in column 2 (0..5)',
         [GLOBAL.HEIGHT3]: 'height of highest 6 in column 3 (0..5)',
-        [GLOBAL.HEIGHT4]: 'height of highest 6 in column 4 (0..5)'
+        [GLOBAL.HEIGHT4]: 'height of highest 6 in column 4 (0..5)',
+        [GLOBAL.MAXCHAIN1]: 'biggest 1-chain / pairs (12+ capped)',
+        [GLOBAL.MAXCHAIN2]: 'biggest 2-chain / pairs (12+ capped)',
+        [GLOBAL.MAXCHAIN3]: 'biggest 3-chain / pairs (12+ capped)',
+        [GLOBAL.MAXCHAIN4]: 'biggest 4-chain / pairs (12+ capped)',
+        [GLOBAL.MAXCHAIN5]: 'biggest 5-chain / pairs (12+ capped)',
+        [GLOBAL.SURF0]: 'surface height of column 0 (0..5)',
+        [GLOBAL.SURF1]: 'surface height of column 1 (0..5)',
+        [GLOBAL.SURF2]: 'surface height of column 2 (0..5)',
+        [GLOBAL.SURF3]: 'surface height of column 3 (0..5)',
+        [GLOBAL.SURF4]: 'surface height of column 4 (0..5)'
     });
     const INPUT_CELLS = BOARD_CELLS + Object.keys(GLOBAL).length;
 
@@ -149,6 +180,35 @@
         return t;
     }
 
+    // Appended feature families for the `mini5_all7h` experiment. All <=5 cells
+    // (no 6-tuples yet): we want to know how far pure 5-tuples reach before
+    // paying for wider shapes. These come strictly AFTER every mini5_all7g tuple
+    // so mini5_all7g(r) stays an exact prefix of mini5_all7h(r) -- that is what
+    // lets grow.js transplant the trained weights and ptrain --freeze-prefix
+    // protect the evaluator while the new tables learn.
+    const CHAINVEC = [GLOBAL.MAXCHAIN1, GLOBAL.MAXCHAIN2, GLOBAL.MAXCHAIN3, GLOBAL.MAXCHAIN4, GLOBAL.MAXCHAIN5];
+    const SURFVEC = [GLOBAL.SURF0, GLOBAL.SURF1, GLOBAL.SURF2, GLOBAL.SURF3, GLOBAL.SURF4];
+    function newExtras() {
+        const t = [];
+        // Adjacent-column height pairs: a tall 6-wall next to a short column is a
+        // pocket, and the full {H0..H4} tuple is too sparse to learn it -- a
+        // 2-cell table (49 entries) generalises far better.
+        for (let i = 0; i + 1 < W; i++) t.push([GLOBAL.HEIGHT0 + i, GLOBAL.HEIGHT0 + i + 1]);
+        // Same idea for the new surface-height profile.
+        for (let i = 0; i + 1 < W; i++) t.push([GLOBAL.SURF0 + i, GLOBAL.SURF0 + i + 1]);
+        // Whole-profile pure-global tuples for each new per-column family.
+        t.push(SURFVEC.slice());
+        t.push(CHAINVEC.slice());
+        // New pure-global mixes: put the opportunity axis (MAXCHAIN) next to the
+        // danger/mobility axes it should be traded off against, and a centre-
+        // surface danger cluster.
+        t.push([GLOBAL.MAXCHAIN5, GLOBAL.SIXES, GLOBAL.EXPOSED, GLOBAL.LEGAL, GLOBAL.ZEROES]);
+        t.push([GLOBAL.MAXCHAIN4, GLOBAL.MAXCHAIN5, GLOBAL.LEGAL, GLOBAL.LEGAL_NO6, GLOBAL.FIVE_COMP]);
+        t.push([GLOBAL.EXPOSED, GLOBAL.HEIGHT1, GLOBAL.HEIGHT2, GLOBAL.HEIGHT3, GLOBAL.SIXES]);
+        t.push([GLOBAL.SURF2, GLOBAL.EXPOSED, GLOBAL.SIXES, GLOBAL.LEGAL, GLOBAL.ZEROES]);
+        return t;
+    }
+
     const SETS = {
         // Small single-bank set with virtual-cell globals, trained from scratch.
         // runs() already emits both orientations, so runs(2..5) covers every
@@ -172,6 +232,10 @@
         mini5_all7g: () => SETS.mini5_all7().concat(
             [[GLOBAL.HEIGHT2, GLOBAL.SIXES, GLOBAL.EXPOSED, GLOBAL.LEGAL, GLOBAL.ZEROES]],
             [[GLOBAL.SIXES, GLOBAL.EXPOSED, GLOBAL.LEGAL, GLOBAL.LEGAL_NO6, GLOBAL.FIVE_COMP]]),
+        // `all7g` plus the appended max-chain / surface-height families and a few
+        // new pure-global mixes (see newExtras). Grown from all7g so the trained
+        // weights transplant exactly; the tail is what this experiment tests.
+        mini5_all7h: () => SETS.mini5_all7g().concat(newExtras()),
 
         base: () => squares().concat(runs(4)),                                   // 36 tuples,   86 436 w
     };
@@ -231,9 +295,13 @@
     // mirror swaps column i with W-1-i, so HEIGHTi must map to HEIGHT(W-1-i) for
     // the mirror reading (and reduction) to stay exact.
     const mirrorCell = k => {
-        if (k >= BOARD_CELLS)
-            return (k >= GLOBAL.HEIGHT0 && k <= GLOBAL.HEIGHT0 + (W - 1))
-                ? GLOBAL.HEIGHT0 + (W - 1) - (k - GLOBAL.HEIGHT0) : k;
+        if (k >= BOARD_CELLS) {
+            if (k >= GLOBAL.HEIGHT0 && k <= GLOBAL.HEIGHT0 + (W - 1))
+                return GLOBAL.HEIGHT0 + (W - 1) - (k - GLOBAL.HEIGHT0);
+            if (k >= GLOBAL.SURF0 && k <= GLOBAL.SURF0 + (W - 1))
+                return GLOBAL.SURF0 + (W - 1) - (k - GLOBAL.SURF0);
+            return k;
+        }
         return (W - 1 - ((k / H) | 0)) * H + (k % H);
     };
 
@@ -323,6 +391,18 @@
             // Reused scratch for global feature extraction. No allocation is
             // performed in value(), including under a many-node phone search.
             this.featureInput = this.t.hasGlobal ? new Uint8Array(INPUT_CELLS) : null;
+            // The max-chain features need a components pass and the surface
+            // heights a column scan; a set that reads neither (e.g. the deployed
+            // all7g) should not pay for them. Detect from the packed cell list.
+            this.needChain = false; this.needSurf = false;
+            for (let k = 0; k < this.t.cells.length; k++) {
+                const c = this.t.cells[k];
+                if (c >= GLOBAL.MAXCHAIN1 && c <= GLOBAL.MAXCHAIN5) this.needChain = true;
+                else if (c >= GLOBAL.SURF0 && c <= GLOBAL.SURF4) this.needSurf = true;
+            }
+            // Scratch for the components flood-fill (allocation-free in value()).
+            this.ccStack = this.needChain ? new Int32Array(BOARD_CELLS) : null;
+            this.ccSeen = this.needChain ? new Uint8Array(BOARD_CELLS) : null;
         }
 
         get meta() {
@@ -382,6 +462,50 @@
                 let hi = 0;
                 for (let j = 0; j < H; j++) if (cells[i * H + j] === 6) hi = j + 1;
                 out[GLOBAL.HEIGHT0 + i] = hi;
+            }
+
+            // Per-column surface height: topmost non-hole (0 = empty), 0..5.
+            if (this.needSurf) {
+                for (let i = 0; i < W; i++) {
+                    let hi = 0;
+                    for (let j = 0; j < H; j++) if (cells[i * H + j] !== 0) hi = j + 1;
+                    out[GLOBAL.SURF0 + i] = hi;
+                }
+            }
+
+            // Largest same-value collapse available per tile value 1..5: the
+            // biggest orthogonally-connected component of that value with >=2
+            // cells, bucketed min(6, size>>1) so 2+->1, 4+->2, ... 12+->6.
+            if (this.needChain) {
+                const seen = this.ccSeen, stack = this.ccStack;
+                let mc1 = 0, mc2 = 0, mc3 = 0, mc4 = 0, mc5 = 0;
+                for (let s = 0; s < BOARD_CELLS; s++) seen[s] = 0;
+                for (let s = 0; s < BOARD_CELLS; s++) {
+                    const v = cells[s];
+                    if (seen[s] || v < 1 || v > 5) continue;
+                    // Flood-fill the component of value v containing s.
+                    let sp = 0, size = 0;
+                    stack[sp++] = s; seen[s] = 1;
+                    while (sp > 0) {
+                        const k = stack[--sp]; size++;
+                        const i = (k / H) | 0, j = k % H;
+                        if (j + 1 < H && !seen[k + 1] && cells[k + 1] === v) { seen[k + 1] = 1; stack[sp++] = k + 1; }
+                        if (j > 0 && !seen[k - 1] && cells[k - 1] === v) { seen[k - 1] = 1; stack[sp++] = k - 1; }
+                        if (i + 1 < W && !seen[k + H] && cells[k + H] === v) { seen[k + H] = 1; stack[sp++] = k + H; }
+                        if (i > 0 && !seen[k - H] && cells[k - H] === v) { seen[k - H] = 1; stack[sp++] = k - H; }
+                    }
+                    if (size < 2) continue;
+                    if (v === 1) { if (size > mc1) mc1 = size; }
+                    else if (v === 2) { if (size > mc2) mc2 = size; }
+                    else if (v === 3) { if (size > mc3) mc3 = size; }
+                    else if (v === 4) { if (size > mc4) mc4 = size; }
+                    else { if (size > mc5) mc5 = size; }
+                }
+                out[GLOBAL.MAXCHAIN1] = Math.min(6, mc1 >> 1);
+                out[GLOBAL.MAXCHAIN2] = Math.min(6, mc2 >> 1);
+                out[GLOBAL.MAXCHAIN3] = Math.min(6, mc3 >> 1);
+                out[GLOBAL.MAXCHAIN4] = Math.min(6, mc4 >> 1);
+                out[GLOBAL.MAXCHAIN5] = Math.min(6, mc5 >> 1);
             }
 
             const fiveGroups = fiveN - fiveAdj + fiveSq;

@@ -22,11 +22,11 @@
 
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
-        module.exports = factory(require('./engine.js'), require('./eval.js'), require('./ntuple.js'), require('./search.js'));
+        module.exports = factory(require('./engine.js'), require('./eval.js'), require('./ntuple.js'), require('./search.js'), require('./mcts.js'), require('./freeze.js'));
     } else {
-        root.CollapseAgents = factory(root.Collapse, root.CollapseEval, root.CollapseNTuple, root.CollapseSearch);
+        root.CollapseAgents = factory(root.Collapse, root.CollapseEval, root.CollapseNTuple, root.CollapseSearch, root.CollapseMCTS, root.CollapseFreeze);
     }
-})(typeof self !== 'undefined' ? self : this, function (Collapse, Ev, NTuple, Search) {
+})(typeof self !== 'undefined' ? self : this, function (Collapse, Ev, NTuple, Search, MCTS, Freeze) {
 
     const { FILL_NONE, FILL_SIX, FILL_SAMPLE } = Collapse;
 
@@ -81,15 +81,20 @@
     // built; spectate.js loads it and passes it in as `options.network`, which
     // is why those agents work in the browser at all.
     // SPECS[0] is what the spectate page opens on, so it must be an agent whose
-    // weight file is in the repository. `all7g-Rcq.bin` is the deployed net
-    // (single-bank, virtual-cell globals, reduce->compact->quantize; see
-    // bot/README.md). Depth 2 comes before depth 3 because building a replay is
-    // synchronous: ~1000 moves at a few ms is a blink, at depth 3 it is the
-    // better part of a minute of frozen page.
+    // weight file is in the repository. `anneal14-Rcq.bin` is the deployed net
+    // (all7h tuple set, virtual-cell globals, trained freeze-root then a low-alpha
+    // anneal, reduce->compact->quantize; see bot/README.md). It is FREEZE-
+    // DEPENDENT -- trained with --freeze-root, so every deployed spec passes
+    // `freeze=1`; without it the net plays materially worse. The d2 config also
+    // carries `esc=6` (re-search one ply deeper when the best move makes a 6):
+    // worth +170 +-60 over plain d2 at ~2x per-move cost (a cost-matched cap
+    // increase ties it, so esc is the default). Depth 2 comes before depth 3
+    // because building a replay is synchronous: ~1000 moves at ~10ms is a few
+    // seconds, at depth 3 it is the better part of a minute of frozen page.
     const SPECS = [
-        { spec: 'fx:weights=bot/weights/all7g-Rcq.bin,depth=2,cap=16,rootk=6', weights: 'bot/weights/all7g-Rcq.bin', label: 'expectimax depth 2, deployed net  (10608)' },
-        { spec: 'fx:weights=bot/weights/all7g-Rcq.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6', weights: 'bot/weights/all7g-Rcq.bin', label: 'expectimax depth 3, deployed net' },
-        { spec: 'td:weights=bot/weights/all7g-Rcq.bin', weights: 'bot/weights/all7g-Rcq.bin', label: 'deployed net, greedy, no search  (8933)' },
+        { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 2, deployed net  (11067)' },
+        { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 3, deployed net' },
+        { spec: 'td:weights=bot/weights/anneal14-Rcq.bin,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'deployed net, greedy, no search  (9308)' },
         { spec: 'td:weights=bot/weights/mini5.bin', weights: 'bot/weights/mini5.bin', label: 'mini5 net, greedy  (7598)' },
         { spec: 'td:weights=bot/weights/c_base.bin', weights: 'bot/weights/c_base.bin', label: 'minimal control net, greedy  (5735)' },
         { spec: 'linear:preset=h1', label: 'linear h1  (5351, fitted to humans)' },
@@ -348,12 +353,20 @@
         const rng = makeRng(options.seed != null ? options.seed : 1);
         const override = 'sym' in options ? { sym: !!options.sym } : null;
         const net = options.network || loadNetwork(options.weights || 'bot/weights/td1.bin', override);
+        // Freeze-root, as in fx: show provably-dead tiles to the net as 6s
+        // (see bot/freeze.js). Behaviour-preserving -- legal moves are unchanged,
+        // so the chosen move is still legal on the real board. Nets trained with
+        // --freeze-root expect this and play worse without it.
+        const freeze = !!options.freeze;
+        const froze = freeze ? game => { const g = game.clone(); g.cells = Freeze.freezeBoard(game.cells); return g; }
+            : game => game;
         return {
             name: 'td',
             scoreMoves(game) {
-                return game.legalMoves().map(move => {
-                    const after = game.preview(move[0], move[1], FILL_NONE);
-                    return { move, value: (after.score - game.score) + net.value(after.cells) };
+                const g = froze(game);
+                return g.legalMoves().map(move => {
+                    const after = g.preview(move[0], move[1], FILL_NONE);
+                    return { move, value: (after.score - g.score) + net.value(after.cells) };
                 });
             },
             chooseMove(game) {
@@ -649,6 +662,12 @@
         const temp = options.temp || 0;
         const sixRule = !!options.sixrule || options.sixeps != null;
         const sixEps = options.sixeps != null ? options.sixeps : Infinity;
+        // Show provably-dead tiles to the net as 6s, once at the search root
+        // (see bot/freeze.js). Behaviour-preserving: legal moves are unchanged,
+        // so the chosen move is still legal on the real board.
+        const freeze = !!options.freeze;
+        const froze = freeze ? game => { const g = game.clone(); g.cells = Freeze.freezeBoard(game.cells); return g; }
+            : game => game;
         const searcher = Search.makeSearcher(net, {
             depth: options.depth || 2,
             cap: options.cap,
@@ -668,11 +687,12 @@
         });
         return {
             name: 'fx',
-            scoreMoves(game) { return searcher.scoreMoves(game); },
+            scoreMoves(game) { return searcher.scoreMoves(froze(game)); },
             chooseMove(game) {
-                let scored = searcher.scoreMoves(game);
+                const g = froze(game);
+                let scored = searcher.scoreMoves(g);
                 if (!scored.length) return null;
-                if (sixRule) scored = applySixRule(game, scored, sixEps);
+                if (sixRule) scored = applySixRule(g, scored, sixEps);
                 let best = -Infinity;
                 for (const s of scored) if (s.value > best) best = s.value;
                 if (temp > 0) {
@@ -684,6 +704,144 @@
                     for (let t = 0; t < scored.length; t++) { r -= wts[t]; if (r <= 0) return scored[t].move; }
                     return scored[scored.length - 1].move;
                 }
+                const tied = scored.filter(s => s.value === best);
+                return tied[Math.floor(rng() * tied.length)].move;
+            }
+        };
+    });
+
+    // ---- MCTS with the network at the leaves -------------------------------
+    // Monte Carlo Tree Search that grows an asymmetric, budget-shaped tree and
+    // evaluates leaves directly with net.value instead of rolling out. Max nodes
+    // use an enlarged UCB exploration term (sqrt(sqrt(N)/n)); chance nodes look
+    // at only ~n^0.2 refills, drive most visits down a single "deep" refill, and
+    // value a move as a weighted average that down-weights that deep line to
+    // 1/log n. See mcts.js for the full rationale. `weights=a.bin+b.bin`
+    // averages several networks, like fx.
+    register('mcts', function (options) {
+        const rng = makeRng(options.seed != null ? options.seed : 1);
+        const net = options.network || loadNetworks(options.weights || 'bot/weights/all7g-Rcq.bin',
+            'sym' in options ? { sym: !!options.sym } : null);
+        const searcher = MCTS.makeMcts(net, {
+            sims: options.sims,
+            c: options.c,
+            capExp: options.capExp,
+            splitExp: options.splitExp,
+            ucb: options.ucb,
+            chance: options.chance,
+            maxdepth: options.maxdepth,
+            maxnodes: options.maxnodes,
+            rng
+        });
+        return {
+            name: 'mcts',
+            scoreMoves(game) { return searcher.scoreMoves(game); },
+            chooseMove(game) {
+                const scored = searcher.scoreMoves(game);
+                if (!scored.length) return null;
+                let best = -Infinity;
+                for (const s of scored) if (s.value > best) best = s.value;
+                const tied = scored.filter(s => s.value === best);
+                return tied[Math.floor(rng() * tied.length)].move;
+            }
+        };
+    });
+
+    // --- sh: Sequential-Halving root sampling (Idea 1) -----------------------
+    // A fixed-depth expectimax, but instead of spending an equal refill budget
+    // on every root move (what fx does), it treats the root moves as bandit
+    // arms and allocates a total sample budget adaptively: sample all arms,
+    // drop the worst half, repeat, so nearly all samples land on the few real
+    // contenders. Anytime in `budget` (total root refill samples), parameter
+    // free (no exploration constant). Each sample of an arm draws a refill of
+    // that move's afterstate and evaluates the resulting board at depth d-1
+    // (greedy for d=2; a fixed-cap expectimax for d>=3). The point it tests:
+    // for a fixed depth, is smart allocation of the chance budget worth more
+    // per unit compute than fx's uniform cap?
+    register('sh', function (options) {
+        const rng = makeRng(options.seed != null ? options.seed : 1);
+        const net = options.network || loadNetworks(options.weights || 'bot/weights/all7g-Rcq.bin',
+            'sym' in options ? { sym: !!options.sym } : null);
+        const d = options.depth || 2;
+        const budget = options.budget || 256;      // total root refill samples
+        const capInner = options.capinner || 8;    // inner cap for d >= 3
+
+        const rootExp = Search.makeExpander();
+        const greedyExp = Search.makeExpander();
+        // For d >= 3, evaluate a board at depth d-1 with a plain fixed-cap fx.
+        const inner = d >= 3
+            ? Search.makeSearcher(net, { depth: d - 1, cap: capInner, capDeep: capInner, rng })
+            : null;
+        const buf = new Uint8Array(25);
+
+        // maxValue(board, d-1): the value of a full board with (d-1) plies left.
+        function evalBoard(cells, maxGen) {
+            if (d === 2) {
+                const nm = greedyExp.expand(cells, maxGen);
+                if (nm === 0) return 0;              // dead board: no future score
+                let best = -Infinity;
+                for (let s = 0; s < nm; s++) {
+                    const v = greedyExp.gain(s) + net.value(greedyExp.board(s));
+                    if (v > best) best = v;
+                }
+                return best;
+            }
+            const out = inner.scoreMoves({ cells, maxGen });
+            if (!out.length) return 0;
+            let best = -Infinity;
+            for (const r of out) if (r.value > best) best = r.value;
+            return best;
+        }
+
+        function pull(arm) {
+            if (arm.holes.length === 0) { arm.sum += evalBoard(arm.after, arm.maxGen); arm.cnt++; return; }
+            buf.set(arm.after);
+            for (let t = 0; t < arm.holes.length; t++) buf[arm.holes[t]] = ((rng() * arm.maxGen) | 0) + 1;
+            arm.sum += evalBoard(buf, arm.maxGen);
+            arm.cnt++;
+        }
+        const score = a => a.gain + (a.cnt ? a.sum / a.cnt : 0);
+
+        function scoreMoves(game) {
+            const nm = rootExp.expand(game.cells, game.maxGen);
+            if (nm === 0) return [];
+            const arms = [];
+            for (let s = 0; s < nm; s++) {
+                const after = rootExp.copy(s);
+                const holes = [];
+                for (let k = 0; k < 25; k++) if (after[k] === 0) holes.push(k);
+                const k = rootExp.cell(s);
+                arms.push({ move: [(k / 5) | 0, k % 5], gain: rootExp.gain(s), maxGen: rootExp.nextGen(s), after, holes, sum: 0, cnt: 0 });
+            }
+
+            if (arms.length === 1) { pull(arms[0]); return arms.map(a => ({ move: a.move, value: score(a) })); }
+
+            // Sequential Halving: `rounds` halving stages, each stage splitting an
+            // equal share of the budget over the arms still alive.
+            let S = arms.slice();
+            const rounds = Math.ceil(Math.log2(S.length));
+            let used = 0;
+            while (S.length > 1 && used < budget) {
+                const perArm = Math.max(1, Math.floor(budget / (S.length * rounds)));
+                for (const a of S) {
+                    for (let i = 0; i < perArm && used < budget; i++) { pull(a); used++; }
+                }
+                S.sort((p, q) => score(q) - score(p));
+                S = S.slice(0, Math.max(1, Math.floor(S.length / 2)));
+            }
+            while (used < budget) { pull(S[0]); used++; }   // remainder to the survivor
+
+            return arms.map(a => ({ move: a.move, value: score(a) }));
+        }
+
+        return {
+            name: 'sh',
+            scoreMoves,
+            chooseMove(game) {
+                const scored = scoreMoves(game);
+                if (!scored.length) return null;
+                let best = -Infinity;
+                for (const s of scored) if (s.value > best) best = s.value;
                 const tied = scored.filter(s => s.value === best);
                 return tied[Math.floor(rng() * tied.length)].move;
             }
