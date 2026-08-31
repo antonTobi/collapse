@@ -85,7 +85,12 @@ def parse_args():
                         'hold --temp constant). Set 0 to decay toward greedy.')
     p.add_argument('--max-moves', dest='max_moves', type=int, default=20000)
     p.add_argument('--report', type=int, default=50000)
-    p.add_argument('--checkpoint-every', dest='checkpoint_every', type=int, default=0)
+    p.add_argument('--checkpoint-every', dest='checkpoint_every', type=int, default=0,
+                   help='checkpoint every N episodes (games)')
+    p.add_argument('--checkpoint-boards', dest='checkpoint_boards', type=int, default=0,
+                   help='checkpoint every N boards (moves/TD-updates) instead of episodes. '
+                        'Fairer unit when episode length varies (e.g. --temp shortens games), '
+                        'so two runs are compared on equal training signal, not game count.')
     p.add_argument('--checkpoint-dir', dest='checkpoint_dir')
     p.add_argument('--out', default='bot/weights/ptd-py.bin')
     p.add_argument('--seed-base', dest='seed_base', type=int, default=2000000)
@@ -274,9 +279,17 @@ def main():
         return
 
     lock = threading.Lock()
-    state = {'next': 0, 'done': 0, 'seeded': 0, 'recent': [], 'sum': 0.0}
+    state = {'next': 0, 'done': 0, 'seeded': 0, 'recent': [], 'sum': 0.0, 'boards': 0}
     dummy = np.zeros(25, np.uint8)
     t0 = time.time()
+
+    def write_checkpoint(name, done, boards):
+        os.makedirs(a.checkpoint_dir, exist_ok=True)
+        ck = os.path.join(a.checkpoint_dir, name)
+        nt.save(ck, net)
+        with open(os.path.join(a.checkpoint_dir, 'manifest.tsv'), 'a') as mf:
+            mf.write('%s\t%d\t%d\n' % (name, done, boards))   # align evals by boards, not games
+        print('checkpoint %s  (ep %d, boards %d)' % (ck, done, boards))
 
     def worker(tid):
         rng = np.random.default_rng(1234567 + tid)
@@ -293,12 +306,13 @@ def main():
                 start = dummy
             frac = ep / a.episodes
             alpha = alpha_at(frac)
-            score, _ = fc.run_episode(seeded, start, a.seed_base + ep, w, off, ln, wbase,
-                                      tcells, tmcells, n, sym, nc, ns, a.freeze_root,
-                                      train_from, alpha, a.max_moves, a.start_moves,
-                                      temp_at(frac))
+            score, nmoves = fc.run_episode(seeded, start, a.seed_base + ep, w, off, ln, wbase,
+                                           tcells, tmcells, n, sym, nc, ns, a.freeze_root,
+                                           train_from, alpha, a.max_moves, a.start_moves,
+                                           temp_at(frac))
             with lock:
                 state['done'] += 1
+                state['boards'] += nmoves
                 if seeded:
                     state['seeded'] += 1
                 else:
@@ -312,30 +326,34 @@ def main():
         th.start()
 
     next_report = a.report
-    next_ckpt = a.checkpoint_every if a.checkpoint_every else a.episodes + 1
+    by_boards = a.checkpoint_boards > 0
+    next_ckpt = (a.checkpoint_boards if by_boards
+                 else (a.checkpoint_every if a.checkpoint_every else a.episodes + 1))
     while any(th.is_alive() for th in threads):
         time.sleep(0.5)
         with lock:
             done = state['done']
+            boards = state['boards']
             mean = state['sum'] / len(state['recent']) if state['recent'] else 0.0
             seeded = state['seeded']
         if done >= next_report:
             el = time.time() - t0
-            print('ep %d (%d seeded)  mean(last %d) %.0f  alpha %.4f  %ds  %.0f ep/s'
-                  % (done, seeded, min(4000, done - seeded), mean, alpha_at(done / a.episodes),
-                     el, done / el))
+            print('ep %d (%d seeded)  boards %d (%.0f/ep)  mean(last %d) %.0f  alpha %.4f  %ds  %.0f ep/s'
+                  % (done, seeded, boards, boards / max(1, done), min(4000, done - seeded), mean,
+                     alpha_at(done / a.episodes), el, done / el))
             next_report += a.report
-        if done >= next_ckpt and a.checkpoint_dir:
-            os.makedirs(a.checkpoint_dir, exist_ok=True)
-            ck = os.path.join(a.checkpoint_dir, 'ck-ep%d.bin' % done)
-            nt.save(ck, net)
-            print('checkpoint %s' % ck)
-            next_ckpt += a.checkpoint_every
+        if a.checkpoint_dir and (boards if by_boards else done) >= next_ckpt:
+            name = ('ck-bd%d.bin' % boards) if by_boards else ('ck-ep%d.bin' % done)
+            write_checkpoint(name, done, boards)
+            next_ckpt += a.checkpoint_boards if by_boards else a.checkpoint_every
 
     for th in threads:
         th.join()
+    with lock:
+        boards = state['boards']
     nt.save(a.out, net)
-    print('saved %s (%d tuples, %d weights)' % (a.out, n, len(w)))
+    print('saved %s (%d tuples, %d weights, %d episodes, %d boards)'
+          % (a.out, n, len(w), state['done'], boards))
 
 
 if __name__ == '__main__':

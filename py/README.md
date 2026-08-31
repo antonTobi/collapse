@@ -91,7 +91,8 @@ python3 py/train.py --resume bot/weights/all7h-seed.bin --sym \
 | `--alpha A --alpha-end B` | geometric anneal from A to B over the run |
 | `--temp T --temp-end E` | Boltzmann exploration temperature in points (0=greedy); anneal T→E (E=0 linear-decays to greedy, omit to hold) |
 | `--jobs N` | Hogwild worker threads |
-| `--checkpoint-every N --checkpoint-dir D` | periodic checkpoints |
+| `--checkpoint-every N --checkpoint-dir D` | periodic checkpoints (every N episodes) |
+| `--checkpoint-boards N` | checkpoint every N boards (moves) instead of episodes -- fairer unit when episode length varies (`--temp` shortens games), so runs compare on equal training signal |
 
 ## Layout
 
