@@ -710,6 +710,54 @@
         };
     });
 
+    // Visible-tactics search. Unlike `fx:norefill=1`, every synthetic depth has
+    // its own evaluator and every node retains the option to stop the visible
+    // line and refill normally. `weights` is V1, `weights2` is V2, and
+    // `weights3` is V3. Each option may still use `a.bin+b.bin` ensembling.
+    register('nf', function (options) {
+        const rng = makeRng(options.seed != null ? options.seed : 1);
+        const override = 'sym' in options ? { sym: !!options.sym } : null;
+        const depth = options.depth || (options.weights3 ? 3 : options.weights2 ? 2 : 1);
+        const nets = [options.network || loadNetworks(
+            options.weights || 'bot/weights/all7g-Rcq.bin', override)];
+        if (depth >= 2) {
+            if (!options.weights2 && !options.network2)
+                throw new Error('nf depth 2+ needs weights2=FILE');
+            nets.push(options.network2 || loadNetworks(options.weights2, override));
+        }
+        if (depth >= 3) {
+            if (!options.weights3 && !options.network3)
+                throw new Error('nf depth 3 needs weights3=FILE');
+            nets.push(options.network3 || loadNetworks(options.weights3, override));
+        }
+        if (depth > 3) throw new Error('nf currently supports depth 1..3');
+
+        const freeze = !!options.freeze;
+        const froze = freeze ? game => {
+            const g = game.clone();
+            g.cells = Freeze.freezeBoard(game.cells);
+            return g;
+        } : game => game;
+        const searcher = Search.makeNoRefillSearcher(nets, {
+            depth,
+            beta: options.beta,
+            beta1: options.beta1,
+            beta2: options.beta2
+        });
+        return {
+            name: 'nf',
+            scoreMoves(game) { return searcher.scoreMoves(froze(game)); },
+            chooseMove(game) {
+                const scored = searcher.scoreMoves(froze(game));
+                if (!scored.length) return null;
+                let best = -Infinity;
+                for (const s of scored) if (s.value > best) best = s.value;
+                const tied = scored.filter(s => s.value === best);
+                return tied[Math.floor(rng() * tied.length)].move;
+            }
+        };
+    });
+
     // ---- MCTS with the network at the leaves -------------------------------
     // Monte Carlo Tree Search that grows an asymmetric, budget-shaped tree and
     // evaluates leaves directly with net.value instead of rolling out. Max nodes

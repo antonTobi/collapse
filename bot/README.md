@@ -42,6 +42,7 @@ Headless implementation of the game plus a place to develop and benchmark agents
 | `tune.js` | Weight tuning by playing games: 1-D sweeps, coordinate ascent, random-direction climbing. |
 | `train.js` | TD(0) self-play training of the value network, single process. |
 | `ptrain.js` | The same training across all cores (Hogwild on a SharedArrayBuffer), and the only one that can train with a search behaviour policy. |
+| `norefill-train.js` | Train the separate depth-2/depth-3 "refill now" heads used by the `nf` visible-tactics agent. |
 | `spectate.js` + `../spectate.html` | Play a game out headlessly, then scrub the replay with a slider, the arrow keys or Home/End. |
 | `devserver.js` | Zero-dependency static server for local dev of the browser app. `node bot/devserver.js [port]` from the repo root, then open `http://localhost:8123` (index / review / spectate / editor). |
 
@@ -560,6 +561,68 @@ chance nodes, to prefer positions whose value does not depend on luck) and
 
 `sixrule` / `sixeps` implement a hand-written override on where 6s may be
 placed; also a negative result, and also documented there.
+
+### Visible no-refill tactics with a stop action
+
+`nf` is a different experiment from the failed `fx:norefill=1`. The old option
+forces the search to continue on an emptying board. `nf` gives each synthetic
+afterstate a stop action whose value is supplied by a depth-specific network:
+
+```
+H_d(A) = V_d(A) + beta_d max(0, max_m(gain(m) + H_{d+1}(A_m)) - V_d(A))
+```
+
+Thus a visible continuation can raise a move's value but can never make it
+worse than refilling immediately. `V1` is the normal deployed evaluator; `V2`
+and `V3` are separate files so training on hole-heavy counterfactual states
+cannot disturb it.
+
+Train V2 from the checked-in deployed net, then warm-start the separate V3 head
+from V2. The q16 base remains frozen as the target in both stages:
+
+```bash
+# Step 1: A2 states (one extra visible collapse, then refill normally).
+node bot/norefill-train.js \
+  --base bot/weights/anneal14-Rcq.bin --depth 2 --freeze-root \
+  --jobs 10 --episodes 1000000 --samples 1 \
+  --alpha 0.004 --alpha-end 0.001 \
+  --checkpoint-every 200000 --checkpoint-dir bot/weights/anneal14-nf2-ckpts \
+  --out bot/weights/anneal14-nf2.bin
+
+# Step 2: A3 states (two extra visible collapses, then refill normally).
+node bot/norefill-train.js \
+  --base bot/weights/anneal14-Rcq.bin \
+  --init bot/weights/anneal14-nf2.bin --depth 3 --freeze-root \
+  --jobs 10 --episodes 1000000 --samples 1 \
+  --alpha 0.004 --alpha-end 0.001 \
+  --checkpoint-every 200000 --checkpoint-dir bot/weights/anneal14-nf3-ckpts \
+  --out bot/weights/anneal14-nf3.bin
+```
+
+Each training update samples a real refill of `A_d` and regresses `V_d(A_d)`
+onto `max(gain + V1(next afterstate))`. At each real V1 self-play position the
+root move and every later no-refill continuation are sampled uniformly, so the
+heads also see rejected root siblings. Increase `--samples` to cover more paths
+per real decision; cost is approximately linear.
+`--init FILE` (also spelled `--resume`) warm-starts or continues a head, while
+`--base` always names the frozen V1 target.
+
+Benchmark hard-max depth 2 and depth 3, plus an attenuated depth-3 variant,
+against the current refill-search baseline:
+
+```bash
+node bot/run.js --jobs 10 --seeds 200 --agents \
+  "fx-d2@fx:weights=bot/weights/anneal14-Rcq.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6,\
+nf-d2@nf:weights=bot/weights/anneal14-Rcq.bin,weights2=bot/weights/anneal14-nf2.bin,depth=2,freeze=1,beta=1,\
+nf-d3@nf:weights=bot/weights/anneal14-Rcq.bin,weights2=bot/weights/anneal14-nf2.bin,weights3=bot/weights/anneal14-nf3.bin,depth=3,freeze=1,beta=1,\
+nf-d3-half@nf:weights=bot/weights/anneal14-Rcq.bin,weights2=bot/weights/anneal14-nf2.bin,weights3=bot/weights/anneal14-nf3.bin,depth=3,freeze=1,beta=0.5"
+```
+
+`beta` attenuates every accepted tactical lift. `beta1` and `beta2` override it
+at the corresponding afterstate level, so (for example) `beta1=0.5,beta2=1`
+trusts the first lift halfway and a depth-3 leaf lift fully. The `run.js`
+benchmark needs no special-case code: `nf` is a normal registered agent, so it
+also works with labels, paired seeds, worker jobs, JSON output and subgames.
 
 ## Growing a network
 
