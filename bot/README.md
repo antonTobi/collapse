@@ -624,6 +624,32 @@ trusts the first lift halfway and a depth-3 leaf lift fully. The `run.js`
 benchmark needs no special-case code: `nf` is a normal registered agent, so it
 also works with labels, paired seeds, worker jobs, JSON output and subgames.
 
+**Result: ruled out (2026-09).** Trained V2 (500k, freeze-root) and benchmarked
+depth 2 before committing to V3. `nf-d2` scores 9825 vs `fx-d2` 11135 over 200
+seeds (-1310 +-90). A `beta` sweep peaks near 0.75 (~9936), still ~1200 behind.
+Tellingly, using V1 as the depth-2 leaf (V1+V1 = 10232) beats the trained head
+(V1+V2 = 9825): a more accurate leaf makes the policy *worse*, monotonically (a
+V2-at-both-levels "consistent scale" fix scored 9485). Diagnostics explain why:
+
+* Score is almost pure game length -- points/move is ~constant (~9.8) across all
+  agents, so the deficit is lost *lifespan*, not worse per-move play. The
+  no-refill continuation trades board health for greedier immediate collapses.
+  It is also counterfactual: the engine refills after every move (`Game.apply`),
+  so `max_m(gain + H_{d+1})` scores a state that never occurs, and a better V2
+  only makes that fiction more convincing.
+* The per-move value deficit is real but tiny (~6 pts, from refill-averaged
+  ground-truth `Y*`) and *invisible to V1* -- V1's own per-position error (rms
+  ~50-70 on these frozen afterstates) buries it, which is exactly why `nf`,
+  built on V1, cannot tell. The no-refill tree features (lift, holes, mobility,
+  max tile) explain only ~3% (R^2=0.034) of that deficit, mostly generic greed
+  V1 already sees; `lift`'s large raw correlation was circular (it is `nf`'s own
+  `argmax(V1+lift)` rule reflected through noisy V1).
+
+Ruled out with evidence: more V2 training, V3 on the same target, stop-head/scale
+corrections, `beta` tuning, and a no-refill-tree feature corrector. The signal
+points instead at **less-noisy value targets** (refill-averaged / residual-guided
+tuple discovery on real afterstates) as the way to expose this per-move gap.
+
 ## Growing a network
 
 ```bash

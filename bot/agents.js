@@ -22,11 +22,11 @@
 
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
-        module.exports = factory(require('./engine.js'), require('./eval.js'), require('./ntuple.js'), require('./search.js'), require('./mcts.js'), require('./freeze.js'));
+        module.exports = factory(require('./engine.js'), require('./eval.js'), require('./ntuple.js'), require('./search.js'), require('./mcts.js'), require('./freeze.js'), require('./cheat.js'));
     } else {
-        root.CollapseAgents = factory(root.Collapse, root.CollapseEval, root.CollapseNTuple, root.CollapseSearch, root.CollapseMCTS, root.CollapseFreeze);
+        root.CollapseAgents = factory(root.Collapse, root.CollapseEval, root.CollapseNTuple, root.CollapseSearch, root.CollapseMCTS, root.CollapseFreeze, root.CollapseCheat);
     }
-})(typeof self !== 'undefined' ? self : this, function (Collapse, Ev, NTuple, Search, MCTS, Freeze) {
+})(typeof self !== 'undefined' ? self : this, function (Collapse, Ev, NTuple, Search, MCTS, Freeze, Cheat) {
 
     const { FILL_NONE, FILL_SIX, FILL_SAMPLE } = Collapse;
 
@@ -94,6 +94,13 @@
     const SPECS = [
         { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 2, deployed net  (11067)' },
         { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 3, deployed net' },
+        // Clairvoyant yardsticks: same net, but the lookahead peeks at the tiles
+        // the RNG will actually drop (see cheat.js) -- an out-of-competition
+        // ceiling, not a real agent, which is why they sit here rather than at the
+        // top despite outscoring everything. depth 2 is slow (~12 ms/move, so a
+        // full game is a ~35 s frozen page, like fx depth 3).
+        { spec: 'cheat:weights=bot/weights/anneal14-Rcq.bin,depth=2,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'CHEAT depth 2 (sees the future), deployed net  (14388)' },
+        { spec: 'cheat:weights=bot/weights/anneal14-Rcq.bin,depth=1,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'CHEAT depth 1 (sees the future), deployed net  (13161)' },
         { spec: 'td:weights=bot/weights/anneal14-Rcq.bin,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'deployed net, greedy, no search  (9308)' },
         { spec: 'td:weights=bot/weights/mini5.bin', weights: 'bot/weights/mini5.bin', label: 'mini5 net, greedy  (7598)' },
         { spec: 'td:weights=bot/weights/c_base.bin', weights: 'bot/weights/c_base.bin', label: 'minimal control net, greedy  (5735)' },
@@ -887,6 +894,34 @@
             scoreMoves,
             chooseMove(game) {
                 const scored = scoreMoves(game);
+                if (!scored.length) return null;
+                let best = -Infinity;
+                for (const s of scored) if (s.value > best) best = s.value;
+                const tied = scored.filter(s => s.value === best);
+                return tied[Math.floor(rng() * tied.length)].move;
+            }
+        };
+    });
+
+    // ---- clairvoyant ("cheating") search -----------------------------------
+    // A yardstick, not a real agent: it looks `depth` moves ahead using the
+    // game's ACTUAL upcoming tiles (preview with FILL_RANDOM advances the real
+    // PRNG), so there is no chance node -- the tree is a plain max-tree. Leaves
+    // are full boards, evaluated by the deployed net's ordinary greedy no-refill
+    // reading (see cheat.js). depth=1 is one clairvoyant ply on top of `td`.
+    register('cheat', function (options) {
+        const rng = makeRng(options.seed != null ? options.seed : 1);
+        const net = options.network || loadNetworks(options.weights || 'bot/weights/all7g-Rcq.bin',
+            'sym' in options ? { sym: !!options.sym } : null);
+        const freeze = !!options.freeze;
+        const froze = freeze ? game => { const g = game.clone(); g.cells = Freeze.freezeBoard(game.cells); return g; }
+            : game => game;
+        const searcher = Cheat.makeCheat(net, { depth: options.depth || 1, freeze });
+        return {
+            name: 'cheat',
+            scoreMoves(game) { return searcher.scoreMoves(froze(game)); },
+            chooseMove(game) {
+                const scored = searcher.scoreMoves(froze(game));
                 if (!scored.length) return null;
                 let best = -Infinity;
                 for (const s of scored) if (s.value > best) best = s.value;
