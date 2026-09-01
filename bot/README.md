@@ -34,6 +34,8 @@ Headless implementation of the game plus a place to develop and benchmark agents
 | `agree.js` | Does a candidate value function make the same moves as a reference one? Agreement, regret and correlation over a corpus. |
 | `tuples.html` | Every tuple shape the network reads, drawn on a board. Open it directly; it reads `ntuple.js`, so it cannot go stale. |
 | `residual.js` | V's Bellman residual by move rank. Everything search buys over greedy is this number, and it costs seconds to read. |
+| `residual-corpus.js` | Build refill-averaged residual targets on ordinary afterstates from complete real-game trajectories. |
+| `../py/discover_tuples.py` | Cross-validated search for missing tuple pairs that reduce held-out teacher regret. |
 | `timing.js` | How fast agents pick a move, on identical positions and one clock. Use this for speed, not `run.js`'s `ms/move`. |
 | `calib.js` | Is the *number* right, not just the ranking? V against Monte Carlo rollouts, including the "this move loses X" delta. |
 | `reveval.js` | Does the spectator's "biggest mistakes" list contain real mistakes? Rolls out the reviewer's move against the human's over held-out games. |
@@ -649,6 +651,94 @@ Ruled out with evidence: more V2 training, V3 on the same target, stop-head/scal
 corrections, `beta` tuning, and a no-refill-tree feature corrector. The signal
 points instead at **less-noisy value targets** (refill-averaged / residual-guided
 tuple discovery on real afterstates) as the way to expose this per-move gap.
+
+## Residual-guided tuple discovery
+
+This pipeline uses search residuals to choose **structure**, not as the final
+training objective. Every corpus position comes from a complete, ordinary game
+trajectory. For each position it stores the top shallow candidate afterstates
+(plus the depth-2 teacher's choice), their `gain + V`, and a high-sample
+refill-averaged depth-2 score. The discovery pass subtracts the common residual
+within each position, fits missing mirror-distinct pairs, and selects them by
+out-of-fold **teacher regret**. All positions from one game seed stay in one
+fold; sibling positions never leak between fitting and validation.
+
+Start with a corpus. The default trajectory is the deployed freeze-aware depth-2
+agent; `cap=256` is the lower-variance teacher, not the playing budget:
+
+```bash
+node bot/residual-corpus.js \
+  --weights bot/weights/anneal14-Rcq.bin \
+  --games 200 --jobs 10 --every 5 --top 4 --cap 256 \
+  --max-positions 40000 --out bot/data/residual-corpus.bin
+```
+
+Screen every missing pair and forward-select up to eight. This first version is
+deliberately pair-only: at most 1081 raw candidates, cheap enough to establish a
+held-out signal before expanding selected pairs into triples or larger shapes.
+
+```bash
+python3 py/discover_tuples.py \
+  --corpus bot/data/residual-corpus.bin \
+  --exclude-set mini5_all7hr --folds 5 --beam 128 --select 8 \
+  --out bot/data/residual-pairs.json
+```
+
+Append the selected tables to the **float32 training checkpoint** (never the
+reduced/compacted/q16 deployment file). Their exact tuple list and the old/new
+boundary are embedded in the CNTP header, so Node and Python can resume and
+benchmark the custom architecture without adding a hard-coded set name.
+
+```bash
+node bot/grow.js \
+  --in bot/weights/anneal14.bin \
+  --append-tuples bot/data/residual-pairs.json \
+  --out bot/weights/anneal14-residual-seed.bin
+```
+
+By default the appended tables start at zero: residuals selected the features,
+but ordinary real-game TD learns their weights. `grow.js` prints the exact
+boundary (`392` for `mini5_all7hr`). First train only the correction tables,
+then run a short low-alpha joint anneal:
+
+```bash
+node bot/ptrain.js --jobs 10 \
+  --resume bot/weights/anneal14-residual-seed.bin --freeze-first 392 --freeze-root \
+  --episodes 300000 --alpha 0.004 --alpha-end 0.001 \
+  --out bot/weights/anneal14-residual-frozen.bin
+
+node bot/ptrain.js --jobs 10 \
+  --resume bot/weights/anneal14-residual-frozen.bin --freeze-root \
+  --episodes 300000 --alpha 0.001 --alpha-end 0.0002 \
+  --out bot/weights/anneal14-residual-joint.bin
+
+# Do-nothing control for the joint phase: same base, seeds, episodes and anneal.
+node bot/ptrain.js --jobs 10 \
+  --resume bot/weights/anneal14.bin --freeze-root \
+  --episodes 300000 --alpha 0.001 --alpha-end 0.0002 \
+  --out bot/weights/anneal14-control-joint.bin
+```
+
+`--init-residual` on `grow.js` is an explicit diagnostic that seeds the new
+tables from the full-corpus residual fit. It is off by default because that
+changes the policy before grounded TD and reintroduces the failure mode of
+direct residual distillation.
+
+Judge checkpoints on complete paired games, against the matching float32 base
+function. Include greedy to see whether the discovered capacity actually moves
+the cheap policy, and depth 2 to make sure it has not merely reshuffled error:
+
+```bash
+node bot/run.js --jobs 10 --seeds 400 --agents \
+  "base-g@td:weights=bot/weights/anneal14-control-joint.bin,freeze=1,\
+candidate-g@td:weights=bot/weights/anneal14-residual-joint.bin,freeze=1,\
+base-d2@fx:weights=bot/weights/anneal14-control-joint.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6,\
+candidate-d2@fx:weights=bot/weights/anneal14-residual-joint.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6"
+```
+
+Held-out corpus regret is a screening metric, not the result. The go/no-go test
+is paired full-game score and lifespan, with a zero-selected/base control under
+the same training budget.
 
 ## Growing a network
 

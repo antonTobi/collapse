@@ -32,6 +32,8 @@
 //   --freeze-prefix SET
 //                   update only tuples appended after SET, preserving an
 //                   exact-grown evaluator while a correction module learns.
+//   --freeze-first N
+//                   the same operation for a self-described/custom tuple set.
 // ============================================================================
 
 const path = require('path');
@@ -60,7 +62,7 @@ function parseArgs(argv) {
         lambdaEnd: -1, starts: null, startFrac: 0.5, startMoves: 0,
         checkpointEvery: 0, checkpointDir: null,
         siblings: 0, sibAlpha: 1, sibEvery: 1, sibCenter: false, explore: 0, exploreRank: 2,
-        distil: 0, frozen: null, rank: 0, rankK: 3, freezePrefix: null, trainFrom: 0,
+        distil: 0, frozen: null, rank: 0, rankK: 3, freezePrefix: null, freezeFirst: 0, trainFrom: 0,
         freezeRoot: false
     };
     for (let i = 2; i < argv.length; i++) {
@@ -105,6 +107,7 @@ function parseArgs(argv) {
         // appended correction tables first. This protects the known-strong
         // evaluator while the new features learn from deliberately OOD starts.
         else if (k === '--freeze-prefix') a.freezePrefix = argv[++i];
+        else if (k === '--freeze-first') a.freezeFirst = parseInt(argv[++i], 10);
         // Convert provably-dead tiles to 6s at each decision's root board (see
         // bot/freeze.js). Root-only and behaviour-preserving, so it trains V on
         // the same frozen-aware boards the fx agent plays with `freeze`.
@@ -165,6 +168,10 @@ function parseArgs(argv) {
     if (a.siblings > 0 && a.searchDepth > 1) {
         console.error('--siblings is a greedy-behaviour option; for search behaviour the equivalent is ' +
             'updating every root move towards the value the search already computed (not implemented)');
+        process.exit(1);
+    }
+    if (a.freezePrefix && a.freezeFirst) {
+        console.error('--freeze-prefix and --freeze-first are alternatives');
         process.exit(1);
     }
     return a;
@@ -568,7 +575,19 @@ async function main() {
         }
         args.trainFrom = small.n;
     }
-    const size = new NTuple.Network(initial, meta).w.length;
+    const probe = new NTuple.Network(initial, meta);
+    if (args.freezeFirst) {
+        if (!args.resume) {
+            console.error('--freeze-first is only useful with --resume');
+            process.exit(1);
+        }
+        if (args.freezeFirst < 1 || args.freezeFirst >= probe.t.n) {
+            console.error('--freeze-first must leave at least one of the ' + probe.t.n + ' tuples trainable');
+            process.exit(1);
+        }
+        args.trainFrom = args.freezeFirst;
+    }
+    const size = probe.w.length;
 
     const sab = new SharedArrayBuffer(size * 4);
     const weights = new Float32Array(sab);
@@ -614,7 +633,8 @@ async function main() {
         (args.rank ? '  rank=' + args.rank + ' over top ' + (args.rankK + 1) +
             (args.frozen ? ' (frozen)' : ' (live)') : '') +
         (args.freezePrefix ? '  frozen-prefix=' + args.freezePrefix +
-            ' (' + args.trainFrom + ' tuples)' : ''));
+            ' (' + args.trainFrom + ' tuples)' : '') +
+        (args.freezeFirst ? '  frozen-first=' + args.freezeFirst + ' tuples' : ''));
 
     const chunk = Math.max(1, Math.round(args.report / args.jobs / 4));
     const workers = [];

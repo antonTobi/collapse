@@ -8,8 +8,8 @@ py/verify_parity.py checks exactly that against ground truth dumped from Node.
 
 Kept deliberately close to the JS structure (same helper names, same iteration
 order) so the two can be diffed by eye. Deployment tricks that only matter for
-serving on a phone (int16 q16, selfOnce folding) are read but not required for
-training, which is always float32 / sym / non-selfOnce here.
+serving on a phone (int16 q16, selfOnce folding) are rejected here: training is
+always float32 / sym / non-selfOnce.
 """
 
 import json
@@ -212,9 +212,17 @@ def tuple_set(name):
 
 class Network:
     def __init__(self, weights, meta):
+        if meta.get('selfOnce'):
+            raise NotImplementedError('selfOnce files are deploy-only; train on the unreduced float32 net')
         self.set_name = meta['set']
         self.sym = bool(meta.get('sym'))
-        self.t = tuple_set(self.set_name)
+        self.tuples = meta.get('tuples')
+        self.base_tuple_count = meta.get('baseTupleCount')
+        self.t = Packed(self.tuples) if self.tuples is not None else tuple_set(self.set_name)
+        if self.base_tuple_count is not None:
+            self.base_tuple_count = int(self.base_tuple_count)
+            if self.base_tuple_count < 0 or self.base_tuple_count > self.t.n:
+                raise ValueError('baseTupleCount must be between 0 and %d' % self.t.n)
         if weights is None:
             weights = np.zeros(self.t.size, np.float32)
         if len(weights) != self.t.size:
@@ -374,6 +382,10 @@ def decode(buf):
 
 def encode(net):
     meta = {'set': net.set_name, 'sym': net.sym}
+    if net.tuples is not None:
+        meta['tuples'] = net.tuples
+    if net.base_tuple_count is not None:
+        meta['baseTupleCount'] = net.base_tuple_count
     jb = json.dumps(meta, separators=(',', ':')).encode()
     pad = (4 - (len(jb) % 4)) % 4
     head = struct.pack('<II', MAGIC, len(jb) + pad) + jb + b'\x00' * pad

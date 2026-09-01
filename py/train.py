@@ -68,6 +68,8 @@ def parse_args():
     p.add_argument('--set', default='mini5_all7hr')
     p.add_argument('--sym', action='store_true')
     p.add_argument('--freeze-prefix', dest='freeze_prefix')
+    p.add_argument('--freeze-first', dest='freeze_first', type=int, default=0,
+                   help='train only tuples after the first N; for embedded/discovered tuple sets')
     p.add_argument('--freeze-root', dest='freeze_root', action='store_true')
     p.add_argument('--starts')
     p.add_argument('--start-frac', dest='start_frac', type=float, default=0.5)
@@ -221,6 +223,8 @@ def main():
     meta_set = net.set_name
 
     train_from = 0
+    if a.freeze_prefix and a.freeze_first:
+        print('--freeze-prefix and --freeze-first are alternatives', file=sys.stderr); sys.exit(1)
     if a.freeze_prefix:
         if not a.resume:
             print('--freeze-prefix needs a grown --resume network', file=sys.stderr); sys.exit(1)
@@ -229,6 +233,13 @@ def main():
             print('set "%s" is not a strict prefix of "%s"' % (a.freeze_prefix, meta_set), file=sys.stderr)
             sys.exit(1)
         train_from = small.n
+    elif a.freeze_first:
+        if not a.resume:
+            print('--freeze-first needs --resume', file=sys.stderr); sys.exit(1)
+        if a.freeze_first < 1 or a.freeze_first >= net.t.n:
+            print('--freeze-first must leave at least one of %d tuples trainable' % net.t.n,
+                  file=sys.stderr); sys.exit(1)
+        train_from = a.freeze_first
 
     t = net.t
     off = np.ascontiguousarray(t.off, np.int64)
@@ -246,7 +257,8 @@ def main():
 
     print('set=%s sym=%s weights=%d jobs=%d%s%s%s' % (
         meta_set, sym, len(w), a.jobs,
-        ('  freeze-prefix=%s (%d tuples)' % (a.freeze_prefix, train_from)) if train_from else '',
+        (('  freeze-prefix=%s (%d tuples)' % (a.freeze_prefix, train_from)) if a.freeze_prefix
+         else ('  freeze-first=%d tuples' % train_from) if train_from else ''),
         '  freeze-root' if a.freeze_root else '',
         ('  starts=%d (%.0f%%)' % (pool_n, 100 * a.start_frac)) if pool_n else ''))
     if il_nodes:

@@ -350,16 +350,48 @@
         return packed[key];
     }
 
+    function explicitTupleSet(tuples) {
+        if (!Array.isArray(tuples) || tuples.length === 0)
+            throw new Error('explicit tuple list must be a non-empty array');
+        const clean = tuples.map((tuple, ti) => {
+            if (!Array.isArray(tuple) || tuple.length === 0)
+                throw new Error('tuple ' + ti + ' must be a non-empty array');
+            const seen = new Set();
+            return tuple.map(cell => {
+                if (!Number.isInteger(cell) || cell < 0 || cell >= INPUT_CELLS)
+                    throw new Error('tuple ' + ti + ' has invalid input cell ' + cell);
+                if (seen.has(cell)) throw new Error('tuple ' + ti + ' repeats input cell ' + cell);
+                seen.add(cell);
+                return cell;
+            });
+        });
+        return { tuples: clean, packed: pack(clean) };
+    }
+
     // --- network ------------------------------------------------------------
 
     class Network {
-        // opts: { set, sym, selfOnce, q16 }. Global board state enters through
+        // opts: { set, tuples, baseTupleCount, sym, selfOnce, q16 }. `tuples`
+        // embeds a discovered/custom architecture in the weight-file header so
+        // checkpoints remain self-contained instead of depending on a new
+        // hard-coded SETS entry for every experiment. Global board state enters through
         // virtual-cell features (see GLOBAL / prepare), not weight banks, so a
         // network is a single flat table per tuple.
         constructor(weights, opts) {
             const o = opts || {};
             this.setName = o.set || 'base';
-            this.t = tupleSet(this.setName);
+            if (o.tuples) {
+                const explicit = explicitTupleSet(o.tuples);
+                this.tuples = explicit.tuples;
+                this.t = explicit.packed;
+            } else {
+                this.tuples = null;
+                this.t = tupleSet(this.setName);
+            }
+            this.baseTupleCount = o.baseTupleCount == null ? null : Number(o.baseTupleCount);
+            if (this.baseTupleCount != null && (!Number.isInteger(this.baseTupleCount) ||
+                this.baseTupleCount < 0 || this.baseTupleCount > this.t.n))
+                throw new Error('baseTupleCount must be between 0 and ' + this.t.n);
             this.sym = !!o.sym;
             const need = this.t.size;
             if (weights && weights.length !== need) {
@@ -407,6 +439,8 @@
 
         get meta() {
             const m = { set: this.setName, sym: this.sym };
+            if (this.tuples) m.tuples = this.tuples;
+            if (this.baseTupleCount != null) m.baseTupleCount = this.baseTupleCount;
             if (this.selfOnce) m.selfOnce = true;
             if (this.q16) m.q16 = true;
             return m;

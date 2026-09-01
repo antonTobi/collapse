@@ -86,6 +86,7 @@ python3 py/train.py --resume bot/weights/all7h-seed.bin --sym \
 | `--set NAME` | build a fresh net on a tuple set (when not resuming) |
 | `--sym` | mirror-symmetric reads (matches the trained nets) |
 | `--freeze-prefix SET` | train only tuples appended after SET (correction module) |
+| `--freeze-first N` | train only tuples after index N (embedded/discovered architecture) |
 | `--freeze-root` | show provably-dead tiles to the net as 6s at each root |
 | `--starts FILE --start-frac F` | begin fraction F of episodes from a position pool |
 | `--alpha A --alpha-end B` | geometric anneal from A to B over the run |
@@ -101,9 +102,11 @@ python3 py/train.py --resume bot/weights/all7h-seed.bin --sym \
   the whole-episode TD(0) runner (nogil, so threads run in parallel).
 - `ntuple.py` / `engine.py` — readable pure-Python reference + the tuple-set
   builder and CNTP weight-file I/O; also the parity oracle.
+- `discover_tuples.py` — game-fold cross-validated pair discovery from the
+  real-afterstate corpus written by `bot/residual-corpus.js`.
 - `verify_parity.py` / `verify_fast.py` — check Python matches Node exactly.
 
-Only supported tuple sets are wired in `ntuple._BASE_SETS` (currently
-`mini5_all7g`, `mini5_all7h`, plus their `r` reduced variants). Add a new set by
-porting its builder from `bot/ntuple.js` — keep the tuple ORDER identical or the
-weights won't line up with Node.
+Named tuple sets are wired in `ntuple._BASE_SETS` (currently `mini5_all7g`,
+`mini5_all7h`, plus their `r` reduced variants). Discovered architectures need
+no Python code change: their exact tuple list is embedded in the CNTP header by
+`bot/grow.js` and round-trips through both trainers.
