@@ -502,5 +502,69 @@
         return { scoreMoves };
     }
 
-    return { makeSearcher, makeExpander, components, collapseInto };
+    // Deterministic no-refill tactical lookahead with a separately trained
+    // evaluator for every synthetic depth. This is deliberately *not* the old
+    // `norefill` expectimax option above. At an afterstate A at level d it uses
+    //
+    //   H_d(A) = V_d(A) + beta_d max(0, max_m(gain(m) + H_{d+1}(A_m)) - V_d(A))
+    //
+    // so stopping the visible line and allowing a normal refill is always an
+    // available option. A no-refill child may raise the estimate, never lower
+    // it. The depth-specific heads are trained by norefill-train.js to predict
+    // exactly that "refill now" value on their synthetic state distributions.
+    function makeNoRefillSearcher(nets, opts) {
+        const o = opts || {};
+        const depth = Math.max(1, o.depth || nets.length);
+        if (!Array.isArray(nets) || nets.length < depth)
+            throw new Error('no-refill search depth ' + depth + ' needs ' + depth + ' networks');
+
+        const exp = [];
+        for (let d = 0; d < depth; d++) exp.push(makeExpander());
+
+        function betaAt(level) {
+            const named = o['beta' + level];
+            return named != null ? Number(named) : (o.beta != null ? Number(o.beta) : 1);
+        }
+
+        // `level` is one-based: level 1 is the ordinary root afterstate, level
+        // 2 is after one further visible collapse without a refill, and so on.
+        function afterValue(cells, maxGen, level) {
+            const base = nets[level - 1].value(cells);
+            if (level >= depth) return base;
+            const beta = betaAt(level);
+            if (!Number.isFinite(beta) || beta < 0)
+                throw new Error('no-refill beta' + level + ' must be a non-negative number');
+            if (beta === 0) return base;
+
+            const e = exp[level];
+            const nm = e.expand(cells, maxGen);
+            if (nm === 0) return base;                 // choose the stop action
+            let continuation = -Infinity;
+            for (let s = 0; s < nm; s++) {
+                const v = e.gain(s) + afterValue(e.board(s), e.nextGen(s), level + 1);
+                if (v > continuation) continuation = v;
+            }
+            return base + beta * Math.max(0, continuation - base);
+        }
+
+        function scoreMoves(game) {
+            const e = exp[0];
+            const nm = e.expand(game.cells, game.maxGen);
+            const out = [];
+            for (let s = 0; s < nm; s++) {
+                const k = e.cell(s);
+                out.push({
+                    move: [(k / H) | 0, k % H],
+                    value: e.gain(s) + afterValue(e.board(s), e.nextGen(s), 1),
+                    slot: s,
+                    made: game.cells[k] + 1
+                });
+            }
+            return out;
+        }
+
+        return { scoreMoves };
+    }
+
+    return { makeSearcher, makeNoRefillSearcher, makeExpander, components, collapseInto };
 });
