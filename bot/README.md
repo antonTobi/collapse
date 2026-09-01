@@ -577,8 +577,8 @@ worse than refilling immediately. `V1` is the normal deployed evaluator; `V2`
 and `V3` are separate files so training on hole-heavy counterfactual states
 cannot disturb it.
 
-Train the first two heads directly from the checked-in deployed net. A q16 base
-is dequantised once for the trainable head; it remains frozen as the target:
+Train V2 from the checked-in deployed net, then warm-start the separate V3 head
+from V2. The q16 base remains frozen as the target in both stages:
 
 ```bash
 # Step 1: A2 states (one extra visible collapse, then refill normally).
@@ -591,7 +591,8 @@ node bot/norefill-train.js \
 
 # Step 2: A3 states (two extra visible collapses, then refill normally).
 node bot/norefill-train.js \
-  --base bot/weights/anneal14-Rcq.bin --depth 3 --freeze-root \
+  --base bot/weights/anneal14-Rcq.bin \
+  --init bot/weights/anneal14-nf2.bin --depth 3 --freeze-root \
   --jobs 10 --episodes 1000000 --samples 1 \
   --alpha 0.004 --alpha-end 0.001 \
   --checkpoint-every 200000 --checkpoint-dir bot/weights/anneal14-nf3-ckpts \
