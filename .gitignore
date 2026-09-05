@@ -25,7 +25,4 @@ Thumbs.db
 # checkpoints, intermediates and losing candidates from piling up as untracked.
 bot/weights/*
 !bot/weights/anneal14-Rcq.bin
-# Base point for the residual/manual tuple-discovery fine-tuning runs on the
-# Python compute server (frozen base + 37 hand-picked tuples, arm trained).
-!bot/weights/anneal14-manual-frozen.bin
 
