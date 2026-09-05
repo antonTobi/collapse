@@ -740,6 +740,30 @@ Held-out corpus regret is a screening metric, not the result. The go/no-go test
 is paired full-game score and lifespan, with a zero-selected/base control under
 the same training budget.
 
+### Results so far (2026-09): tuple arms on anneal14
+
+Both the auto-discovered pairs and a hand-picked 37-tuple arm (board x surface
+mirroring the board x H arm, surface-height triples, chain x danger crosses, all
+length-3 diagonals; see `bot/data/manual-arm-v1.json`) land in the same place:
+
+- **Greedy:** a small nudge (+70..+80 vs `anneal14.bin`, ~1sigma, not clean).
+- **Depth-2 (deployment):** essentially flat. The searched agent recovers on its
+  own whatever the arm adds at the leaf, so afterstate-feature additions on this
+  already-strong V wash out where it matters.
+- A 500k **joint anneal** (unfreezing the base) with `--starts` opening variety
+  produced the only mildly-positive depth-2 point (a mid-run checkpoint ~+60 vs
+  old), but it was marginal, selection-biased, and the *final* checkpoint had
+  overfit to slightly negative -- so benchmark checkpoints, don't assume the last
+  is best. Net judgement: not worth deploying; this direction is ~exhausted.
+
+Two reusable lessons: (1) **freeze-first alpha** -- training only the appended
+tables spreads each update over far fewer tuples, so the per-weight step is
+~`(2N-self)/(2*new-self)` larger than a full-net run (~10x for 37 new, ~100x for
+4); scale alpha down accordingly (0.004 -> ~0.001) or the new tables train noisy.
+(2) greedy gains routinely do **not** survive depth-2, so judge on the searched
+condition. The Python trainer (`py/train.py`) round-trips these embedded/custom
+tuple sets with no code change (Node<->Python value parity verified).
+
 ## Growing a network
 
 ```bash
