@@ -25,4 +25,4 @@ Thumbs.db
 # checkpoints, intermediates and losing candidates from piling up as untracked.
 bot/weights/*
 !bot/weights/anneal14-Rcq.bin
-
+!bot/weights/anneal14-manual-rect6-6M-Rcq.bin

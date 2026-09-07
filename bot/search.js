@@ -131,9 +131,107 @@
         };
     }
 
+    // Strength-2 orthogonal arrays: q^m rows, (q^m-1)/(q-1) columns.
+    // Columns are projectively distinct linear forms over GF(q). GF(4) uses
+    // x^2+x+1, NOT arithmetic modulo four. Any two columns balance every pair.
+    const pairDesigns = new Map();
+    function pairDesign(q, rows) {
+        const key = q + ':' + rows;
+        if (pairDesigns.has(key)) return pairDesigns.get(key);
+        const mul4 = [0,0,0,0, 0,1,2,3, 0,2,3,1, 0,3,1,2];
+        const columns = [];
+        for (let code = 1; code < rows && columns.length < N; code++) {
+            let z = code;
+            while (z % q === 0) z = (z / q) | 0;
+            if (z % q !== 1) continue; // first nonzero coefficient is one
+            const col = new Uint8Array(rows);
+            for (let r = 0; r < rows; r++) {
+                let a = code, b = r, v = 0;
+                while (a) {
+                    const x = a % q, y = b % q;
+                    v = q === 4 ? v ^ mul4[x * 4 + y] : (v + x * y) % q;
+                    a = (a / q) | 0; b = (b / q) | 0;
+                }
+                col[r] = v;
+            }
+            columns.push(col);
+        }
+        pairDesigns.set(key, columns);
+        return columns;
+    }
+
+    function makePairSampler() {
+        const columnOrder = new Uint8Array(N), assigned = new Uint8Array(N);
+        const used = new Uint8Array(N), symbols = new Uint8Array(4);
+        const rowOrder = new Uint16Array(2048);
+        function shuffle(a, n, rng) {
+            for (let i = n - 1; i > 0; i--) {
+                const j = (rng() * (i + 1)) | 0, v = a[i]; a[i] = a[j]; a[j] = v;
+            }
+        }
+        return function sample(st, hs, nh, q, budget, rng) {
+            if ((q !== 3 && q !== 4) || budget < q || budget > 2048 || budget % q)
+                throw new Error('pair sampler requires q=3/4 and a budget divisible by q, <=2048');
+            let offset = 0;
+            while (budget - offset >= q * q) {
+                let rows = q * q;
+                while (rows * q <= budget - offset) rows *= q;
+                const design = pairDesign(q, rows), nc = design.length;
+                for (let c = 0; c < nc; c++) columnOrder[c] = c;
+                shuffle(columnOrder, nc, rng);
+                used.fill(0);
+                // If there are too many holes, reuse columns evenly, avoiding
+                // neighboring holes. Pairs sharing a column have exact marginals
+                // but not exact joint counts. Distinct columns retain both.
+                for (let t = 0; t < nh; t++) {
+                    let best = 0, bestCost = Infinity;
+                    for (let c = 0; c < nc; c++) {
+                        const col = columnOrder[c];
+                        let cost = used[col];
+                        for (let u = 0; u < t; u++) {
+                            const a = hs[t], b = hs[u];
+                            const adjacent = Math.abs(a - b) === H ||
+                                ((a / H | 0) === (b / H | 0) && Math.abs(a - b) === 1);
+                            if (adjacent && assigned[u] === col) cost += N;
+                        }
+                        if (cost < bestCost) { bestCost = cost; best = col; }
+                    }
+                    assigned[t] = best; used[best]++;
+                }
+                for (let r = 0; r < rows; r++) rowOrder[r] = r;
+                shuffle(rowOrder, rows, rng);
+                for (let t = 0; t < nh; t++) {
+                    for (let v = 0; v < q; v++) symbols[v] = v + 1;
+                    // Independent symbol permutations make each sampled board an
+                    // unbiased iid refill, even for reused columns and higher-
+                    // order dependencies in the unrandomized design.
+                    shuffle(symbols, q, rng);
+                    const col = design[assigned[t]], base = t * budget + offset;
+                    for (let r = 0; r < rows; r++) st[base + r] = symbols[col[rowOrder[r]]];
+                }
+                offset += rows;
+            }
+            // Preserve the budget: marginal stratification for small budgets and
+            // any remainder. Opening cap=16 is rounded to 15: 9 OA + 6 LHS draws.
+            const left = budget - offset;
+            if (left) for (let t = 0; t < nh; t++) {
+                const base = t * budget + offset;
+                for (let r = 0; r < left; r++) st[base + r] = (r % q) + 1;
+                for (let r = left - 1; r > 0; r--) {
+                    const j = (rng() * (r + 1)) | 0, v = st[base + r];
+                    st[base + r] = st[base + j]; st[base + j] = v;
+                }
+            }
+        };
+    }
+
     function makeSearcher(net, opts) {
         const o = opts || {};
         const depth = o.depth || 2;
+        const sampling = o.sampling || 'pair';
+        if (sampling !== 'random' && sampling !== 'lhs' && sampling !== 'pair')
+            throw new Error('sampling must be random, lhs or pair');
+        const pairSample = sampling === 'pair' ? makePairSampler() : null;
         const baseRng = o.rng || Math.random;
         // Common random numbers. Every root move's chance node currently draws
         // its own refill samples, so comparing two moves adds two independent
@@ -391,9 +489,15 @@
             }
             // Round the budget down to a multiple of maxGen so the strata come
             // out even, and build one shuffled column of tiles per hole.
-            const B = Math.max(maxGen, Math.min(MAX_BUDGET, budget - (budget % maxGen)));
+            const bounded = Math.min(MAX_BUDGET, budget);
+            const B = Math.max(maxGen, bounded - (bounded % maxGen));
             const st = strat[lv], reps = B / maxGen;
-            for (let t = 0; t < nh; t++) {
+            if (pairSample) pairSample(st, hs, nh, maxGen, B, rng);
+            else if (sampling === 'random') for (let t = 0; t < nh; t++) {
+                const base = t * B;
+                for (let x = 0; x < B; x++) st[base + x] = (rng() * maxGen | 0) + 1;
+            }
+            else for (let t = 0; t < nh; t++) {
                 const base = t * B;
                 for (let a = 0; a < maxGen; a++)
                     for (let r = 0; r < reps; r++) st[base + a * reps + r] = a + 1;
@@ -566,5 +670,5 @@
         return { scoreMoves };
     }
 
-    return { makeSearcher, makeNoRefillSearcher, makeExpander, components, collapseInto };
+    return { makeSearcher, makeNoRefillSearcher, makeExpander, components, collapseInto, makePairSampler };
 });

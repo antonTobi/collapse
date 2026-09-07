@@ -22,7 +22,7 @@
 // on; the solid marker of the move about to be played appears only on the
 // recorded game line.
 (function () {
-    const REVIEW_WEIGHTS = 'bot/weights/anneal14-Rcq.bin'
+    const REVIEW_WEIGHTS = 'bot/weights/anneal14-manual-rect6-6M-Rcq.bin'
     // Evaluation graph: the bot's depth-2 estimate of the final score reachable
     // from a position. rootk keeps it cheap -- only the best move's value is read,
     // and that move is among the few the root search keeps at full depth.
@@ -30,7 +30,7 @@
     // esc=6: deepen on 6-making moves, matching how the deployed bot plays (+170
     // over plain d2). Roughly doubles the eval-graph compute, which is acceptable
     // for an offline, one-pass graph.
-    const GRAPH_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=16,topk=2,rootk=6,crn=1,freeze=1,esc=6'
+    const GRAPH_SPEC = 'fx:weights=' + REVIEW_WEIGHTS + ',depth=2,cap=16,topk=2,rootk=6,crn=1,freeze=1,esc=6,sampling=pair'
     const COL_DEPTH2 = '#e67e22'
     const COL_KEY = '#c0392b'
     // Key-moment detection: the onset of a sustained downward turn in the eval.

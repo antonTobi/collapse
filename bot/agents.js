@@ -92,7 +92,7 @@
     // because building a replay is synchronous: ~1000 moves at ~10ms is a few
     // seconds, at depth 3 it is the better part of a minute of frozen page.
     const SPECS = [
-        { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 2, deployed net  (11067)' },
+        { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=2,cap=16,rootk=6,freeze=1,esc=6,sampling=pair', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 2, deployed net  (11126)' },
         { spec: 'fx:weights=bot/weights/anneal14-Rcq.bin,depth=3,cap=32,capDeep=4,topk=2,rootk=6,freeze=1', weights: 'bot/weights/anneal14-Rcq.bin', label: 'expectimax depth 3, deployed net' },
         // Clairvoyant yardsticks: same net, but the lookahead peeks at the tiles
         // the RNG will actually drop (see cheat.js) -- an out-of-competition
@@ -689,6 +689,7 @@
             grade: options.grade,
             ms: options.ms,
             crn: options.crn,
+            sampling: options.sampling,
             gap: options.gap,
             rng
         });
