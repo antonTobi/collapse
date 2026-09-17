@@ -332,7 +332,7 @@ function checkSpecialAchievements() {
     if (!grid) return;
     
     // Check for game over without any shape tiles (no 6s created)
-    if (grid.gameOver && grid.sixSplits.length === 0) {
+    if (grid.gameOver && grid.polyominoList.length === 0) {
         unlockAchievement("no_shapes_game");
     }
     

@@ -11,6 +11,7 @@ let currentUserDisplayName = null;
 let topScoresDaily = [];
 let topScoresAllTime = [];
 let topScoresYesterday = [];
+let topScoresPersonal = [];
 let showLeaderboard = false;
 let showAllTime = false;
 let isLoadingScores = false;
@@ -637,6 +638,39 @@ async function fetchTopScores(fetchAllTime = showAllTime) {
     }
 }
 
+async function fetchPersonalScores() {
+    isLoadingScores = true;
+    try {
+        if (!currentUserDisplayName) {
+            topScoresPersonal = [];
+            return;
+        }
+
+        const usersSnapshot = await db.collection('highscores')
+            .where('displayName', '==', currentUserDisplayName)
+            .get();
+        const userIds = [...new Set(usersSnapshot.docs.map(doc => doc.data().userId).filter(Boolean))];
+        const scoreSnapshots = await Promise.all(userIds.map(userId =>
+            db.collection('scores').where('userId', '==', userId).get()
+        ));
+
+        topScoresPersonal = scoreSnapshots
+            .flatMap(snapshot => snapshot.docs.map(doc => ({
+                ...doc.data(),
+                displayName: currentUserDisplayName
+            })))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 10);
+
+        console.log(`Personal scores fetched (${currentUserDisplayName}):`, topScoresPersonal);
+    } catch (error) {
+        console.error("Error fetching personal scores:", error);
+    } finally {
+        isLoadingScores = false;
+        redraw();
+    }
+}
+
 async function fetchYesterdayScores() {
     isLoadingScores = true;
     try {
@@ -773,6 +807,12 @@ function initializeAuth() {
             
             // Fetch all comparison scores for settings display
             fetchAllComparisonScores();
+
+            if (typeof currentSubTab !== 'undefined' && currentSubTab.leaderboards === "personal" &&
+                typeof showMenu !== 'undefined' && showMenu &&
+                typeof currentMenuTab !== 'undefined' && currentMenuTab === "leaderboards") {
+                fetchPersonalScores().then(() => loop());
+            }
         } else {
             // User is signed out.
             currentUser = null;

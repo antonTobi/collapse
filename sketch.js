@@ -6,7 +6,7 @@ let showMoveCount;
 let showMenu = false;
 let currentMenuTab = "howtoplay"; // "howtoplay", "leaderboards", "achievements", "stats", "settings"
 let currentSubTab = {
-    leaderboards: "today", // "alltime", "yesterday", "today"
+    leaderboards: "today", // "alltime", "personal", "yesterday", "today"
     achievements: "score", // "score", "time", "shape", "other"
     stats: "personal" // "thisgame", "personal", "global"
 };
@@ -205,81 +205,80 @@ function draw() {
     text(grid.displayScore, width / 2, 38);
 
     textSize(15);
-    if (!over) {
-        // Check if split diff should be displayed (takes priority over extra stat)
-        let showingSplitDiff = false;
-        let splitDiffAlpha = 255;
-        
-        if (settings.compareSplits !== "nothing" && grid.scoreSplitDiff !== null) {
-            let elapsed = Date.now() - splitDiffDisplayTime;
-            if (elapsed < SPLIT_DIFF_DURATION) {
-                showingSplitDiff = true;
-                
-                // Calculate alpha for fadeout in last 0.5 seconds
-                let fadeStartTime = SPLIT_DIFF_DURATION - 500;
-                if (elapsed > fadeStartTime) {
-                    splitDiffAlpha = 255 * (1 - (elapsed - fadeStartTime) / 500);
-                }
+    // Check if split diff should be displayed (takes priority over extra stat)
+    let showingSplitDiff = false;
+    let splitDiffAlpha = 255;
+
+    if (!over && settings.compareSplits !== "nothing" && grid.scoreSplitDiff !== null) {
+        let elapsed = Date.now() - splitDiffDisplayTime;
+        if (elapsed < SPLIT_DIFF_DURATION) {
+            showingSplitDiff = true;
+
+            // Calculate alpha for fadeout in last 0.5 seconds
+            let fadeStartTime = SPLIT_DIFF_DURATION - 500;
+            if (elapsed > fadeStartTime) {
+                splitDiffAlpha = 255 * (1 - (elapsed - fadeStartTime) / 500);
             }
         }
-        
-        // Always draw extra stat first (underneath), so it shows through during fadeout
-        if (settings.extraStat !== "nothing") {
-            let extraStatText = "";
-            if (settings.extraStat === "moves") {
-                extraStatText = grid.moves.length + " moves";
-            } else if (settings.extraStat === "time") {
-                extraStatText = formatTime(grid.firstMoveTime !== null ? Date.now() - grid.firstMoveTime : 0);
-            }
-            
-            if (extraStatText) {
-                fill(0);
-                noStroke();
-                text(extraStatText, width / 2, 66);
-            }
+    }
+
+    // Always draw extra stat first (underneath), so it shows through during fadeout
+    if (settings.extraStat !== "nothing") {
+        let extraStatText = "";
+        if (settings.extraStat === "moves") {
+            extraStatText = grid.moves.length + " moves";
+        } else if (settings.extraStat === "time") {
+            let endTime = grid.gameOver ? (grid.lastMoveTime || grid.firstMoveTime) : Date.now();
+            extraStatText = formatTime(grid.firstMoveTime !== null ? endTime - grid.firstMoveTime : 0);
         }
-        
-        // Draw split diff on top with background rectangle
-        if (showingSplitDiff) {
-            let sign;
-            let textColor;
-            
-            if (grid.scoreSplitDiff < 0) {
-                sign = "";
-                textColor = color(128); // Gray
-            } else if (grid.scoreSplitDiff === 0) {
-                sign = "=";
-                textColor = color(128); // Gray
-            } else {
-                sign = "+";
-                textColor = color(10, 10, 240); // Blue
-            }
-            
-            let splitText =sign + grid.scoreSplitDiff;
-            
-            // Add "vs" label based on comparison type
-            let vsLabel = "";
-            if (settings.compareSplits === "pb") vsLabel = " vs PB";
-            else if (settings.compareSplits === "dailypb") vsLabel = " vs DPB";
-            else if (settings.compareSplits === "wr") vsLabel = " vs WR";
-            else if (settings.compareSplits === "dailywr") vsLabel = " vs DWR";
-            splitText += vsLabel;
-            
-            // Draw background rectangle to cover extra stat (only needed if there's an extra stat)
-            if (settings.extraStat !== "nothing") {
-                noStroke();
-                fill(red(color(bgLight)), green(color(bgLight)), blue(color(bgLight)), splitDiffAlpha);
-                // Use a fixed width that covers typical extra stat text
-                let rectWidth = 180;
-                let rectHeight = 24;
-                rect(width / 2 - rectWidth / 2, 66 - rectHeight / 2, rectWidth, rectHeight);
-            }
-            
-            // Draw split diff text with alpha
-            fill(red(textColor), green(textColor), blue(textColor), splitDiffAlpha);
+
+        if (extraStatText) {
+            fill(over ? "white" : "black");
             noStroke();
-            text(splitText, width / 2, 66);
+            text(extraStatText, width / 2, 66);
         }
+    }
+
+    // Draw split diff on top with background rectangle
+    if (showingSplitDiff) {
+        let sign;
+        let textColor;
+
+        if (grid.scoreSplitDiff < 0) {
+            sign = "";
+            textColor = color(128); // Gray
+        } else if (grid.scoreSplitDiff === 0) {
+            sign = "=";
+            textColor = color(128); // Gray
+        } else {
+            sign = "+";
+            textColor = color(10, 10, 240); // Blue
+        }
+
+        let splitText =sign + grid.scoreSplitDiff;
+
+        // Add "vs" label based on comparison type
+        let vsLabel = "";
+        if (settings.compareSplits === "pb") vsLabel = " vs PB";
+        else if (settings.compareSplits === "dailypb") vsLabel = " vs DPB";
+        else if (settings.compareSplits === "wr") vsLabel = " vs WR";
+        else if (settings.compareSplits === "dailywr") vsLabel = " vs DWR";
+        splitText += vsLabel;
+
+        // Draw background rectangle to cover extra stat (only needed if there's an extra stat)
+        if (settings.extraStat !== "nothing") {
+            noStroke();
+            fill(red(color(bgLight)), green(color(bgLight)), blue(color(bgLight)), splitDiffAlpha);
+            // Use a fixed width that covers typical extra stat text
+            let rectWidth = 180;
+            let rectHeight = 24;
+            rect(width / 2 - rectWidth / 2, 66 - rectHeight / 2, rectWidth, rectHeight);
+        }
+
+        // Draw split diff text with alpha
+        fill(red(textColor), green(textColor), blue(textColor), splitDiffAlpha);
+        noStroke();
+        text(splitText, width / 2, 66);
     }
 
     // Draw achievement notification if active
@@ -705,6 +704,7 @@ function drawMenuPanel() {
     if (currentMenuTab === "leaderboards") {
         subtabs = [
             { id: "alltime", label: "All-Time" },
+            { id: "personal", label: "Personal" },
             { id: "yesterday", label: "Yesterday" },
             { id: "today", label: "Today" }
         ];
@@ -859,6 +859,9 @@ function drawLeaderboardContent(panelX, contentStartY, panelWidth, contentHeight
     if (subTab === "alltime") {
         topScores = topScoresAllTime;
         emptyMessage = "No scores yet.";
+    } else if (subTab === "personal") {
+        topScores = topScoresPersonal;
+        emptyMessage = "No personal scores yet.";
     } else if (subTab === "yesterday") {
         topScores = topScoresYesterday || [];
         emptyMessage = "No scores from yesterday.";
@@ -1463,15 +1466,7 @@ function calculateShapeMatches() {
 function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     let lineHeight = 45;
     let checkboxSize = 24;
-    
-    // Calculate total content height
-    // 1 checkbox (45) + 4 toggle groups (45 + 30 each = 75 each) + padding
-    let totalHeight = 20 + lineHeight * 1 + (lineHeight + 30) * 4 + 20;
-    
-    // Clamp scroll position
-    let maxScroll = Math.max(0, totalHeight - contentHeight);
-    menuScrollY = Math.max(0, Math.min(menuScrollY, maxScroll));
-    
+
     // Clip to content area
     push();
     drawingContext.save();
@@ -1479,7 +1474,7 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     drawingContext.rect(panelX, contentStartY, panelWidth, contentHeight);
     drawingContext.clip();
     
-    let y = contentStartY + 20 - menuScrollY;
+    let y = contentStartY + 20;
     let checkboxX = panelX + panelWidth - 50;
 
     // Disable Animation setting
@@ -1617,17 +1612,6 @@ function drawSettingsContent(panelX, contentStartY, panelWidth, contentHeight) {
     // Restore clipping
     drawingContext.restore();
     pop();
-    
-    // Draw scrollbar if content overflows
-    if (totalHeight > contentHeight) {
-        let scrollbarX = panelX + panelWidth - 8;
-        let scrollbarHeight = contentHeight * (contentHeight / totalHeight);
-        let scrollbarY = contentStartY + (menuScrollY / maxScroll) * (contentHeight - scrollbarHeight);
-        
-        fill(100, 150);
-        noStroke();
-        rect(scrollbarX, scrollbarY, 4, scrollbarHeight, 2);
-    }
 
     textAlign(CENTER, CENTER);
 }
@@ -1690,7 +1674,7 @@ function onClick() {
         // Header area - always accessible
         if (mouseX > width - 80) {
             // Reset button (top right)
-            if (grid.gameOver || !grid.hasSplits || resetConfirmPending) {
+            if (grid.gameOver || grid.moves.length === 0 || resetConfirmPending) {
                 newGame();
                 showMenu = false;
                 cachedShapeMatches = null;
@@ -1756,6 +1740,9 @@ function onClick() {
                                 menuScrollY = 0;
                                 handleTabSwitch(tabs[i]);
                                 loop();
+                            } else if (tabs[i] === "leaderboards" && !isLoadingScores) {
+                                handleTabSwitch(tabs[i]);
+                                loop();
                             }
                             redraw();
                             return;
@@ -1769,7 +1756,7 @@ function onClick() {
                 let subtabs = null;
 
                 if (currentMenuTab === "leaderboards") {
-                    subtabs = ["alltime", "yesterday", "today"];
+                    subtabs = ["alltime", "personal", "yesterday", "today"];
                 } else if (currentMenuTab === "achievements") {
                     subtabs = ["score", "time", "shape", "other"];
                 } else if (currentMenuTab === "stats") {
@@ -1785,6 +1772,9 @@ function onClick() {
                                 currentSubTab[currentMenuTab] = subtabs[i];
                                 storeItem("currentSubTab", currentSubTab);
                                 menuScrollY = 0;
+                                handleSubTabSwitch(currentMenuTab, subtabs[i]);
+                                loop();
+                            } else if (currentMenuTab === "leaderboards" && !isLoadingScores) {
                                 handleSubTabSwitch(currentMenuTab, subtabs[i]);
                                 loop();
                             }
@@ -1830,7 +1820,7 @@ function onClick() {
                 // Check if clicking settings checkboxes/options
                 if (currentMenuTab === "settings") {
                     let contentStartY = 110 + 35 + 30; // tabY + tabHeight + title space
-                    let y = contentStartY + 20 - menuScrollY;
+                    let y = contentStartY + 20;
                     let checkboxX = panelX + panelWidth - 50;
                     let checkboxSize = 24;
                     let lineHeight = 45;
@@ -1905,7 +1895,6 @@ function onClick() {
 
                 // Handle drag scrolling for scrollable tabs
                 if (currentMenuTab === "howtoplay" || currentMenuTab === "achievements" ||
-                    currentMenuTab === "settings" ||
                     (currentMenuTab === "stats" && (currentSubTab.stats === "personal" || currentSubTab.stats === "thisgame"))) {
                     menuDragStartY = mouseY;
                     menuDragStartScrollY = menuScrollY;
@@ -1961,6 +1950,8 @@ function handleSubTabSwitch(tabId, subTabId) {
 function fetchLeaderboardData(subTabId) {
     if (subTabId === "alltime") {
         fetchTopScores(true).then(() => loop());
+    } else if (subTabId === "personal") {
+        fetchPersonalScores().then(() => loop());
     } else if (subTabId === "today") {
         fetchTopScores(false).then(() => loop());
     } else if (subTabId === "yesterday") {
@@ -1986,7 +1977,6 @@ function isScrollableTab() {
     return showMenu && (
         currentMenuTab === "howtoplay" ||
         currentMenuTab === "achievements" ||
-        currentMenuTab === "settings" ||
         (currentMenuTab === "stats" && (currentSubTab.stats === "personal" || currentSubTab.stats === "thisgame"))
     );
 }
